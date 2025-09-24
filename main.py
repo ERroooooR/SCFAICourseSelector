@@ -30,7 +30,7 @@ class Properties:
     }
     # Chrome 浏览器可执行文件路径
     google_path = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
-    # ChromeDriver 路径 (建议使用绝对路径)
+    # ChromeDriver 路径 (不要动)
     chromedriver_path = r"chromedriver.exe"
 
     def __init__(self):
@@ -258,7 +258,7 @@ class GetCourse:
         print("等待后刷新页面...")
         time.sleep(0.8)
         print("正在刷新页面...")
-         self.driver.refresh()
+        self.driver.refresh()
         print("刷新后等待页面加载...")
         time.sleep(0.8)  # 等待页面加载稳定
 
