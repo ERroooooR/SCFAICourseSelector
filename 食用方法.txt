@@ -1,0 +1,9 @@
+1.安装谷歌浏览器，请到官网下载，不要修改安装目录  下载链接：https://www.google.com/intl/zh-CN/chrome/
+2.安装python 
+3.运行create_venv_windows.bat
+4.用记事本或者vscode打开main.py 修改
+courseList = {
+    }
+4.运行run_app_in_venv_windows.bat
+
+参考资料：https://blog.csdn.net/z_l_2021/article/details/134853336
