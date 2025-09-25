@@ -20,7 +20,7 @@ from selenium.common.exceptions import NoSuchElementException, ElementNotInterac
 
 class Properties:
     # 开始抢课时间
-    begin = datetime.strptime("2025-9-24 17:52:00", "%Y-%m-%d %H:%M:%S")
+    begin = datetime.strptime("2025-9-25 13:00:30", "%Y-%m-%d %H:%M:%S")
     # 延迟时间，防止页面未加载完成
     DELAY_TIME = 0.8
 
@@ -109,7 +109,7 @@ class GetCourse:
             self.driver.get(target_url)
         xpathStr = f"//div[contains(@class,\"select-model\")]//div[contains(@class,\"select-list-model\") or contains(@class,\"selected-course-info\")]//button[.//span[contains(text(), \"{func}\")]]"
         
-        max_retries = 1 # 设置最大重试次数
+        max_retries = 180 # 设置最大重试次数
         retry_count = 0
         while retry_count < max_retries:
             try:
