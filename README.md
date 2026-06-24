@@ -43,7 +43,8 @@ Linux:   bash setup.sh && bash run_app.sh
     "courses": {
         "体育2": {
             "label": "羽毛球",
-            "class_id": ""
+            "class_id": "",
+            "teacher": ""
         }
     }
 }
@@ -57,6 +58,10 @@ Linux:   bash setup.sh && bash run_app.sh
 | `delay_time` | float | 页面加载等待秒数，网络慢可调大 |
 | `click_burst` | int | 单门课一轮最多连击次数（不刷新） |
 | `dual_mode` | bool | `true`=双Tab并行(轮询+激进)，`false`=仅轮询 |
+| `api_mode` | bool | `true`=API 直连选课（JSON 解析，快 10-100 倍），`false`=DOM 点击 |
+| `auto_login` | bool | `true`=启动后自动填写学号密码并登录 |
+| `username` | string | 学号（`auto_login=true` 时必填） |
+| `password` | string | 密码（`auto_login=true` 时必填） |
 | `chrome_path` | string | Chrome 路径，留空自动检测 |
 | `fuzzy_match` | bool | `true`=课程名模糊匹配（`"体育"` 可点 `"体育2"`），`false`=精确匹配 |
 
@@ -69,9 +74,9 @@ Linux:   bash setup.sh && bash run_app.sh
 }
 ```
 
-- `label` 和 `class_id` 是 **OR 关系**，任意命中即匹配
-- 两者都为空 → 自动选第一个可用班（跳过冲突/满员/锁定）
-- 简写：`"体育2": "羽毛球"` 等价于 `{"label": "羽毛球", "class_id": ""}`
+- `label`、`class_id`、`teacher` 是 **OR 关系**，任意命中即匹配
+- 三者都为空 → 自动选第一个可用班（跳过冲突/满员/锁定）
+- 简写：`"体育2": "羽毛球"` 等价于 `{"label": "羽毛球", "class_id": "", "teacher": ""}`
 
 ### 自动回退逻辑
 

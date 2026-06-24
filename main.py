@@ -43,6 +43,10 @@ def load_config():
     chrome_path = cfg.get("chrome_path", "").strip()
     fuzzy_match = bool(cfg.get("fuzzy_match", False))
     dual_mode = bool(cfg.get("dual_mode", True))
+    api_mode = bool(cfg.get("api_mode", False))
+    auto_login = bool(cfg.get("auto_login", False))
+    username = cfg.get("username", "").strip()
+    password = cfg.get("password", "").strip()
     courses = cfg.get("courses", {})
 
     # 清理 courses 中的 _comment 等非课程条目（键以 _ 开头的跳过）
@@ -53,14 +57,15 @@ def load_config():
     for k, v in courses.items():
         if isinstance(v, str):
             v = v.strip()
-            normalized[k] = {"label": v, "class_id": ""}
+            normalized[k] = {"label": v, "class_id": "", "teacher": ""}
         elif isinstance(v, dict):
             normalized[k] = {
                 "label": (v.get("label", "") or "").strip(),
                 "class_id": (v.get("class_id", "") or "").strip(),
+                "teacher": (v.get("teacher", "") or "").strip(),
             }
         else:
-            normalized[k] = {"label": "", "class_id": ""}
+            normalized[k] = {"label": "", "class_id": "", "teacher": ""}
     courses = normalized
 
     return {
@@ -70,6 +75,10 @@ def load_config():
         "chrome_path": chrome_path or None,
         "fuzzy_match": fuzzy_match,
         "dual_mode": dual_mode,
+        "api_mode": api_mode,
+        "auto_login": auto_login,
+        "username": username,
+        "password": password,
         "courses": courses,
     }
 
@@ -83,10 +92,15 @@ def _create_default_config(path):
         "chrome_path": "",
         "fuzzy_match": True,
         "dual_mode": True,
+        "api_mode": False,
+        "auto_login": False,
+        "username": "",
+        "password": "",
         "courses": {
             "体育2": {
                 "label": "羽毛球",
-                "class_id": ""
+                "class_id": "",
+                "teacher": ""
             }
         }
     }
@@ -194,6 +208,10 @@ class Properties:
         cls.FUZZY_MATCH = cfg["fuzzy_match"]
         cls.courseList = cfg["courses"]
         cls.dual_mode = bool(cfg.get("dual_mode", True))
+        cls.api_mode = bool(cfg.get("api_mode", False))
+        cls.auto_login = bool(cfg.get("auto_login", False))
+        cls.login_username = cfg.get("username", "").strip()
+        cls.login_password = cfg.get("password", "").strip()
         cls.google_path = None
         if cfg["chrome_path"] and os.path.exists(cfg["chrome_path"]):
             cls.google_path = cfg["chrome_path"]
@@ -285,10 +303,11 @@ class GetCourse:
     AGGRESSIVE_MAX_RETRIES = 300  # 单个课程最大连续重试次数（防死循环）
     MODAL_RENDER_GAP = 0.3        # Modal 表格渲染等待
 
-    def __init__(self, courseList, driver=None, fuzzy_match=False):
+    def __init__(self, courseList, driver=None, fuzzy_match=False, api_selector=None):
         self.driver = driver
         self.courseList = courseList
         self.fuzzy_match = fuzzy_match
+        self.api_selector = api_selector
         self.web_wait = WebDriverWait(self.driver, 4)
 
     def _course_title_xpath(self, name):
@@ -328,18 +347,27 @@ class GetCourse:
             pass
 
     def select(self, name):
-        """ 执行选课操作 — 在二级 Modal 中智能选择教学班。
+        """ 执行选课操作 — API 模式下走 JSON 解析，否则走 DOM 点击。
 
         两层独立匹配：
         1. 课程名（name）→ 主列表定位课程（受 fuzzy_match 控制）
-        2. label/class_id → Modal 内筛选教学班（各自模糊匹配，OR 关系）
-
-        回退逻辑：
-        - 时间冲突（exclamation-circle）→ 跳过
-        - 容量已满 / 已选 / 教学班已锁定 → 跳过
-        - label/class_id 都为空 → 自动选第一个可用班
-        - 匹配失败 → 回退到下一个教学班
+        2. label/class_id/teacher → Modal 内筛选教学班（各自模糊匹配，OR 关系）
         """
+        target = self.courseList.get(name, {"label": "", "class_id": "", "teacher": ""})
+
+        # ── API 模式：跳过 DOM，直接 JSON 选课 ──
+        if self.api_selector:
+            success, msg = self.api_selector.find_and_select(
+                name, target, fuzzy_course=self.fuzzy_match
+            )
+            if success:
+                print(f"[API] ✓ {name}: {msg}")
+                return True
+            else:
+                print(f"[API]   {name}: {msg}")
+                return False
+
+        # ── DOM 模式（原逻辑）──
         # 1. 点击课程链接打开 Modal
         course_link = self.wait(2, By.XPATH, self._course_title_xpath(name))
         course_link.click()
@@ -363,6 +391,7 @@ class GetCourse:
             target = {"label": target, "class_id": ""}
         target_label = (target.get("label", "") or "").strip()
         target_cid  = (target.get("class_id", "") or "").strip()
+        target_teacher = (target.get("teacher", "") or "").strip()
 
         # 2. 等待 Modal 中的教学班表格出现
         row_xpath = (
@@ -375,7 +404,7 @@ class GetCourse:
             self.close()
             return False
 
-        print(f"  找到 {len(rows)} 个教学班，label='{target_label}' class_id='{target_cid}'")
+        print(f"  找到 {len(rows)} 个教学班，label='{target_label}' class_id='{target_cid}' teacher='{target_teacher}'")
 
         # 3. 遍历教学班行，找第一个可选的
         for idx, row in enumerate(rows):
@@ -383,73 +412,80 @@ class GetCourse:
             if len(cells) < 9:
                 continue
 
-            # --- 状态检测（最后列 td[9]） ---
-            status_text = cells[8].text.strip()
+            # 用 textContent 替代 .text（.text 对不可见元素返回空串）
+            def cell_text(cell):
+                try:
+                    return (cell.get_attribute("textContent") or "").strip()
+                except Exception:
+                    return (cell.text or "").strip()
 
-            if status_text in ("已选", "容量已满", "教学班已锁定"):
-                print(f"    班 {idx+1}: 跳过（{status_text}）")
-                continue
+            class_id_text = cell_text(cells[0])
+            label_text = cell_text(cells[5]) if len(cells) > 5 else ""
+            teacher_text = cell_text(cells[3]) if len(cells) > 3 else ""
+            capacity_text = cell_text(cells[4]) if len(cells) > 4 else ""
 
-            # 必须有 checkbox 才可选
-            checkboxes = cells[8].find_elements(By.XPATH, ".//input[@type='checkbox']")
-            if not checkboxes:
-                print(f"    班 {idx+1}: 跳过（无选择框，状态: {status_text or '无'}）")
-                continue
-
-            # --- 冲突检测（td[1] 内的图标） ---
-            # 时间冲突
-            conflicts = cells[0].find_elements(By.XPATH, ".//*[contains(@aria-label,'exclamation-circle')]")
-            if conflicts:
-                print(f"    班 {idx+1}: 跳过（时间冲突）")
-                continue
-
-            # 教学班已锁定
-            locks = cells[0].find_elements(By.XPATH, ".//*[contains(@aria-label,'lock')]")
-            if locks:
-                print(f"    班 {idx+1}: 跳过（教学班已锁定）")
-                continue
-
-            # --- 匹配逻辑 ---
-            class_id_text = cells[0].text.strip()   # 教学班号
-            label_text = cells[5].text.strip() if len(cells) > 5 else ""  # 标签
-            capacity_text = cells[4].text.strip() if len(cells) > 4 else ""  # 容量
-
+            # ── 匹配判断 ──
             matched = False
             reason_parts = []
 
-            if not target_label and not target_cid:
-                # 都没指定 → 第一个可用班
+            if not target_label and not target_cid and not target_teacher:
                 matched = True
-                reason_parts.append("自动（第一个可用）")
+                reason_parts.append("自动")
             else:
-                # label 和 class_id 独立模糊匹配（包含即可），OR 关系
                 if target_label and target_label in label_text:
                     matched = True
                     reason_parts.append(f"标签含'{target_label}'")
                 if target_cid and target_cid in class_id_text:
                     matched = True
                     reason_parts.append(f"班号含'{target_cid}'")
-
-            reason = " + ".join(reason_parts) if reason_parts else ""
+                if target_teacher and target_teacher in teacher_text:
+                    matched = True
+                    reason_parts.append(f"教师含'{target_teacher}'")
+            match_info = f"班号={class_id_text} 教师={teacher_text} 标签={label_text}"
 
             if not matched:
-                print(f"    班 {idx+1}: 跳过（不匹配）"
-                      f" 班号={class_id_text} 标签={label_text}")
+                print(f"    班 {idx+1}: 跳过（不匹配） {match_info}")
                 continue
 
-            # --- 执行选择 ---
-            print(f"    班 {idx+1}: ✓ {reason} → 班号={class_id_text} 容量={capacity_text} 标签={label_text}")
+            # ── 过滤条件：匹配的行也要检查是否可选 ──
+            status_text = cell_text(cells[8])
+
+            if status_text in ("已选", "容量已满", "教学班已锁定"):
+                print(f"    班 {idx+1}: 跳过（匹配但{status_text}） {match_info}")
+                continue
+
+            checkboxes = cells[8].find_elements(By.XPATH, ".//input[@type='checkbox']")
+            if not checkboxes:
+                print(f"    班 {idx+1}: 跳过（匹配但无选择框） {match_info}")
+                continue
+
+            conflicts = cells[0].find_elements(By.XPATH, ".//*[contains(@aria-label,'exclamation-circle')]")
+            if conflicts:
+                print(f"    班 {idx+1}: 跳过（匹配但时间冲突） {match_info}")
+                continue
+
+            locks = cells[0].find_elements(By.XPATH, ".//*[contains(@aria-label,'lock')]")
+            if locks:
+                print(f"    班 {idx+1}: 跳过（匹配但已锁定） {match_info}")
+                continue
+
+            # ── 执行选择 ──
+            reason = " + ".join(reason_parts)
+            print(f"    班 {idx+1}: ✓ {reason} → {match_info} 容量={capacity_text}")
             try:
+                # 滚动到 checkbox 可见区域
+                self.driver.execute_script(
+                    "arguments[0].scrollIntoView({block:'center',inline:'center'});",
+                    checkboxes[0]
+                )
                 checkboxes[0].click()
 
-                # 初步确认
                 confirm_1 = self.driver.find_element(By.XPATH,
                     "//div[@class='select-class-info-modal']"
                     "//button[.//span[contains(text(),'选')]]")
                 confirm_1.click()
                 print("    已点击初步选课确认。")
 
-                # 最终确认
                 confirm_2 = self.driver.find_element(By.XPATH,
                     "//div[@class='ant-modal-confirm-btns']"
                     "//button[.//span[contains(text(),'确')]]")
@@ -464,7 +500,7 @@ class GetCourse:
                 continue
 
         # 所有行遍历完都没匹配
-        print(f"  课程 {name}: 无可用教学班（label='{target_label}' class_id='{target_cid}'）。")
+        print(f"  课程 {name}: 无可用教学班（label='{target_label}' class_id='{target_cid}' teacher='{target_teacher}'）。")
         self.close()
         return False
 
@@ -559,11 +595,53 @@ class GetCourse:
         list_url = self.list_url
 
         if is_primary:
-            # ── 主线程：执行完整登录 ──
+            # ── 主线程：执行登录 ──
             self.driver.maximize_window()
             print(f"[{label}] 1. 导航至登录页面: {self.login_url}")
-            print(f"[{label}]    请在浏览器中手动登录（只需一次）。")
             self.driver.get(self.login_url)
+
+            # ── 自动登录 ──
+            if Properties.auto_login and Properties.login_username and Properties.login_password:
+                print(f"[{label}]    自动登录中 ({Properties.login_username})...")
+                try:
+                    # 等待登录表单
+                    WebDriverWait(self.driver, 10).until(
+                        EC.presence_of_element_located(
+                            (By.XPATH, "//input[@placeholder and contains(@placeholder,'学工号')]")
+                        )
+                    )
+                    # 确保在"账号登录" tab（Element UI: el-tabs__item）
+                    account_tab = self.driver.find_elements(
+                        By.XPATH, "//*[@role='tab' and contains(.,'账号登录')]"
+                    )
+                    if account_tab and account_tab[0].get_attribute("aria-selected") != "true":
+                        account_tab[0].click()
+                        time.sleep(0.3)
+
+                    # 填入用户名
+                    user_input = self.driver.find_element(
+                        By.XPATH, "//input[@placeholder and contains(@placeholder,'学工号')]"
+                    )
+                    user_input.clear()
+                    user_input.send_keys(Properties.login_username)
+
+                    # 填入密码
+                    pwd_input = self.driver.find_element(
+                        By.XPATH, "//input[@type='password' or contains(@placeholder,'密码')]"
+                    )
+                    pwd_input.clear()
+                    pwd_input.send_keys(Properties.login_password)
+
+                    # 点击登录按钮
+                    login_btn = self.driver.find_element(
+                        By.XPATH, "//button[.//span[text()='登录'] or contains(text(),'登录')]"
+                    )
+                    login_btn.click()
+                    print(f"[{label}]    已点击登录按钮，等待跳转...")
+                except Exception as e:
+                    print(f"[{label}]    自动登录失败: {e}，请手动登录")
+            else:
+                print(f"[{label}]    请在浏览器中手动登录（只需一次）。")
 
             print(f"[{label}] 2. 等待登录成功: {self.dashboard_url}")
             while True:
@@ -680,11 +758,280 @@ class GetCourse:
         print("[激进] 所有课程已处理。")
 
 
-def run(courseList, drivers, dual_mode=True):
+# ============================================================
+# API 直连选课 — 绕过 DOM，直接 JSON 解析 + HTTP POST
+# ============================================================
+
+class APISelector:
+    """通过学校选课 API 直接选课（使用浏览器 fetch，无需 token）。
+
+    所有 API 调用通过 driver.execute_async_script 在浏览器 JS 上下文中执行，
+    自动继承页面的 Authorization / Cookie，无需手动提取 token。
+
+    用法:
+        api = APISelector(driver)
+        api.find_and_select("体育2", {"label": "羽毛球", "teacher": "纪超香"})
+    """
+
+    # 限速常量（服务器对 POST /student/select 有频率限制）
+    POST_COOLDOWN = 1.0       # 两次 POST 间最小间隔（秒）
+    POST_BACKOFF_MAX = 5.0    # 遇到限速时最大退避秒数
+    RATE_LIMIT_MSG = "请求过于频繁"  # 服务器限速提示
+
+    def __init__(self, driver):
+        self.driver = driver
+        self._last_post_time = 0  # 上次 POST 时间戳
+        self._cached_token = None  # 缓存 token，避免重复提取
+
+    # ── Token ──
+
+    def _get_token(self):
+        """从浏览器 localStorage 读取 Bearer token。"""
+        token = self.driver.execute_script(
+            "var t = localStorage.getItem('cqu_edu_ACCESS_TOKEN') || "
+            "localStorage.getItem('cqu_edu_CURRENT_TOKEN');"
+            "if (t) { try { return JSON.parse(t); } catch(e) { return t; } }"
+            "return null;"
+        )
+        if token:
+            print(f"[API] Token 获取成功: {token[:20]}...")
+            return token
+        print("[API] Token 未找到，请确认已登录。")
+        return None
+
+    def _browser_fetch(self, url, method="GET", body=None):
+        """在浏览器中执行 fetch 并返回 JSON。自动注入 Bearer token。"""
+        if self._cached_token is None:
+            self._cached_token = self._get_token()
+        token = self._cached_token
+
+        auth_part = f"'Authorization':'Bearer {token}'," if token else ""
+        body_part = f"body:JSON.stringify({body})," if body else ""
+
+        wrapped = f"""
+        var done = arguments[arguments.length - 1];
+        fetch('{url}', {{
+            method: '{method}',
+            credentials: 'include',
+            headers: {{ {auth_part} 'Content-Type': 'application/json', 'Accept': 'application/json' }},
+            {body_part}
+        }}).then(function(r) {{
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+        }}).then(function(data) {{
+            done(JSON.stringify({{ok: true, data: data}}));
+        }}).catch(function(err) {{
+            done(JSON.stringify({{ok: false, error: err.message || String(err)}}));
+        }});
+        """
+        try:
+            raw = self.driver.execute_async_script(wrapped)
+            result = json.loads(raw)
+            if result.get("ok"):
+                return result.get("data")
+            else:
+                err = result.get("error", "")
+                if "HTTP 401" in err and self._cached_token:
+                    # token 可能过期，清除缓存重新读取 localStorage
+                    print(f"[API] 401，Token 可能过期，重新读取...")
+                    self._cached_token = None
+                    return None
+                print(f"[API] fetch 失败: {err}")
+                return None
+        except Exception as e:
+            print(f"[API] execute_async_script 异常: {e}")
+            return None
+
+    # ── API 端点 ──
+
+    def get_course_list(self, selection_source="主修"):
+        """获取课程列表，返回扁平化数组 [{id, name, codeR, ...}]。"""
+        from urllib.parse import quote
+        url = f"/api/enrollment/enrollment/course-list?selectionSource={quote(selection_source)}"
+        resp = self._browser_fetch(url, "GET")
+        if not resp:
+            return []
+        # API 格式: {status:"success", data: [{courseVOList: [...], ...}]}
+        data_list = resp.get("data", [])
+        courses = []
+        for area in data_list:
+            for c in area.get("courseVOList", []):
+                courses.append(c)
+        return courses
+
+    def get_course_details(self, course_id, selection_source="主修"):
+        """获取教学班详情，返回 selectCourseVOList。"""
+        from urllib.parse import quote
+        url = f"/api/enrollment/enrollment/courseDetails/{course_id}?selectionSource={quote(selection_source)}"
+        data = self._browser_fetch(url, "GET")
+        if data and "selectCourseListVOs" in data:
+            vos = data["selectCourseListVOs"]
+            if vos and "selectCourseVOList" in vos[0]:
+                return vos[0]["selectCourseVOList"]
+        return []
+
+    def submit_selection(self, course_name, course_code, course_id, class_id,
+                         selection_source="主修"):
+        """提交选课请求（内置限速保护 + 自动退避）。
+
+        返回: (success: bool, message: str)
+        """
+        # 限速保护
+        elapsed = time.time() - self._last_post_time
+        if elapsed < self.POST_COOLDOWN:
+            time.sleep(self.POST_COOLDOWN - elapsed)
+
+        for attempt in range(1, 4):
+            self._last_post_time = time.time()
+            data = self._browser_fetch(
+                "/api/enrollment/enrollment/student/select", "POST",
+                json.dumps({
+                    "courses": [{
+                        "courseName": course_name,
+                        "courseCode": course_code,
+                        "courseId": str(course_id),
+                        "classes": [{"classIds": [str(class_id)], "fakeClassTypeList": []}],
+                    }],
+                    "selectionSource": selection_source,
+                })
+            )
+
+            if data is None:
+                return False, "网络错误"
+
+            msg = data.get("msg", data.get("message", ""))
+            if data.get("ok") is True or data.get("status") == "success":
+                return True, "选课成功"
+
+            if self.RATE_LIMIT_MSG in msg:
+                wait = min(self.POST_COOLDOWN * (2 ** attempt), self.POST_BACKOFF_MAX)
+                print(f"[API]   限速退避: 等待 {wait:.1f}s 后重试 ({attempt}/3)")
+                time.sleep(wait)
+                continue
+
+            return False, msg
+
+        return False, "请求过于频繁，已达最大重试"
+
+
+    # ── 核心匹配 ──
+
+    def find_and_select(self, course_name, target, selection_source="主修",
+                        fuzzy_course=True):
+        """完整选课流程（API 模式）。
+
+        参数:
+            course_name:  课程名（如"体育2"）
+            target:       {"label": "...", "class_id": "...", "teacher": "..."}
+            fuzzy_course: 课程名模糊匹配
+
+        返回:
+            (True, msg)  选课成功
+            (False, msg) 失败原因
+        """
+        target_label = (target.get("label", "") or "").strip()
+        target_cid = (target.get("class_id", "") or "").strip()
+        target_teacher = (target.get("teacher", "") or "").strip()
+
+        # 1. 从课程列表中找到 courseId 和 courseCode
+        course_list = self.get_course_list(selection_source)
+        if not course_list:
+            return False, "无法获取课程列表"
+
+        course_id = None
+        course_code = None
+        for c in course_list:
+            c_name = c.get("name", "")
+            if fuzzy_course and course_name in c_name:
+                course_id = c["id"]
+                course_code = c.get("codeR", c.get("code", ""))
+                course_name_full = c_name
+                break
+            elif not fuzzy_course and c_name == course_name:
+                course_id = c["id"]
+                course_code = c.get("codeR", c.get("code", ""))
+                course_name_full = c_name
+                break
+
+        if not course_id:
+            return False, f"课程 '{course_name}' 不在列表中"
+
+        print(f"[API] 找到课程: {course_name_full} (id={course_id}, code={course_code})")
+
+        # 2. 获取教学班详情
+        classes = self.get_course_details(course_id, selection_source)
+        if not classes:
+            return False, "无法获取教学班详情（可能是非选课时间）"
+
+        print(f"[API] 找到 {len(classes)} 个教学班")
+
+        # 3. 过滤 + 匹配
+        matched_log = []
+        for cls in classes:
+            labels = cls.get("classTagNameList", [])
+            instructor = cls.get("instructorNames", "")
+            class_nbr = cls.get("classNbr", "")
+            selected_num = cls.get("selectedNum", 0)
+            capacity = cls.get("stuCapacity", 999)
+            class_id = cls.get("id", "")
+
+            # 过滤不可选条件
+            skip_reason = None
+            if cls.get("errorList"):
+                skip_reason = "时间冲突"
+            elif cls.get("selectedFlag"):
+                skip_reason = "已选"
+            elif selected_num >= capacity:
+                skip_reason = "容量已满"
+            elif cls.get("selectCourseLocked"):
+                skip_reason = "已锁定"
+
+            if skip_reason:
+                matched_log.append(
+                    f"  跳过 {class_nbr}: {skip_reason} "
+                    f"教师={instructor} 标签={labels} 容量={selected_num}/{capacity}"
+                )
+                continue
+
+            # 匹配逻辑（OR 关系）
+            matched = False
+            if not target_label and not target_cid and not target_teacher:
+                matched = True
+
+            if target_label and any(target_label in lbl for lbl in labels):
+                matched = True
+            if target_cid and target_cid in class_nbr:
+                matched = True
+            if target_teacher and target_teacher in instructor:
+                matched = True
+
+            if matched:
+                # 提交选课！
+                print(f"\n".join(matched_log[-10:]))  # 印最后10条跳过记录
+                print(f"  ✓ 选定: {class_nbr} 教师={instructor} "
+                      f"标签={labels} 容量={selected_num}/{capacity}")
+
+                success, msg = self.submit_selection(
+                    course_name_full, course_code, course_id, class_id, selection_source
+                )
+                return success, msg
+            else:
+                matched_log.append(
+                    f"  跳过 {class_nbr}: 不匹配 "
+                    f"教师={instructor} 标签={labels} 容量={selected_num}/{capacity}"
+                )
+
+        # 所有都跳过/不匹配
+        print("\n".join(matched_log[-20:]))
+        return False, f"无可用教学班（label='{target_label}' class_id='{target_cid}' teacher='{target_teacher}'）"
+
+
+def run(courseList, drivers, dual_mode=True, api_mode=False):
     """ 启动选课。
 
     drivers: WebDriver 实例列表
     dual_mode: True=双窗口（轮询+激进），False=单窗口轮询
+    api_mode: True=API 直连选课（JSON 解析，快 10-100 倍）
     """
     if not drivers:
         print("错误: 需要提供 WebDriver 实例。")
@@ -693,6 +1040,12 @@ def run(courseList, drivers, dual_mode=True):
     if dual_mode and len(drivers) < 2:
         print("警告: dual_mode 需要至少 2 个 driver，回退为单窗口模式。")
         dual_mode = False
+
+    # ── API 模式初始化 ──
+    api = None
+    if api_mode:
+        print("=== API 直连模式 ===")
+        api = APISelector(drivers[0])
 
     # 每个窗口独立队列（避免线程竞争）
     courses = list(courseList.keys())
@@ -706,7 +1059,9 @@ def run(courseList, drivers, dual_mode=True):
     threads = []
 
     # 窗口 1：轮询模式
-    instance_poll = GetCourse(courseList, drivers[0], fuzzy_match=Properties.FUZZY_MATCH)
+    instance_poll = GetCourse(courseList, drivers[0],
+                              fuzzy_match=Properties.FUZZY_MATCH,
+                              api_selector=api)
     instances.append(instance_poll)
     thread_poll = Thread(target=instance_poll.run_poll, args=(queue_poll,), name="Poll")
     threads.append(thread_poll)
@@ -714,9 +1069,12 @@ def run(courseList, drivers, dual_mode=True):
 
     if dual_mode:
         # 窗口 2：激进模式
-        instance_agg = GetCourse(courseList, drivers[1], fuzzy_match=Properties.FUZZY_MATCH)
+        instance_agg = GetCourse(courseList, drivers[1],
+                                 fuzzy_match=Properties.FUZZY_MATCH,
+                                 api_selector=api)
         instances.append(instance_agg)
-        thread_agg = Thread(target=instance_agg.run_aggressive, args=(queue_aggressive,), name="Aggressive")
+        thread_agg = Thread(target=instance_agg.run_aggressive,
+                           args=(queue_aggressive,), name="Aggressive")
         threads.append(thread_agg)
         print("已创建 [激进] 线程（窗口 2）")
 
@@ -747,7 +1105,10 @@ if __name__ == '__main__':
             print(f"开始时间: {Properties.begin}")
             print(f"模糊匹配: {'开' if Properties.FUZZY_MATCH else '关'}")
             print(f"连击次数: {Properties.CLICK_BURST}")
-            run(Properties.courseList, drivers, dual_mode=Properties.dual_mode)
+            print(f"API 模式: {'开' if Properties.api_mode else '关'}")
+            run(Properties.courseList, drivers,
+                dual_mode=Properties.dual_mode,
+                api_mode=Properties.api_mode)
         except KeyboardInterrupt:
             print("\n用户中断，正在退出...")
         finally:
