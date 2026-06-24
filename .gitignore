@@ -21,3 +21,6 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+# 配置文件（含密码，不提交）
+config.json

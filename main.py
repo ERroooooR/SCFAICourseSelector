@@ -24,6 +24,18 @@ from selenium.common.exceptions import NoSuchElementException
 
 
 # ============================================================
+# DOM 工具
+# ============================================================
+
+def _cell_text(cell):
+    """读取表格单元格文本，优先用 textContent（兼容不可见元素）。"""
+    try:
+        return (cell.get_attribute("textContent") or "").strip()
+    except Exception:
+        return (cell.text or "").strip()
+
+
+# ============================================================
 # 配置文件加载
 # ============================================================
 
@@ -386,9 +398,6 @@ class GetCourse:
             self.close()
             return False
 
-        target = self.courseList.get(name, {"label": "", "class_id": ""})
-        if isinstance(target, str):
-            target = {"label": target, "class_id": ""}
         target_label = (target.get("label", "") or "").strip()
         target_cid  = (target.get("class_id", "") or "").strip()
         target_teacher = (target.get("teacher", "") or "").strip()
@@ -412,17 +421,10 @@ class GetCourse:
             if len(cells) < 9:
                 continue
 
-            # 用 textContent 替代 .text（.text 对不可见元素返回空串）
-            def cell_text(cell):
-                try:
-                    return (cell.get_attribute("textContent") or "").strip()
-                except Exception:
-                    return (cell.text or "").strip()
-
-            class_id_text = cell_text(cells[0])
-            label_text = cell_text(cells[5]) if len(cells) > 5 else ""
-            teacher_text = cell_text(cells[3]) if len(cells) > 3 else ""
-            capacity_text = cell_text(cells[4]) if len(cells) > 4 else ""
+            class_id_text = _cell_text(cells[0])
+            label_text = _cell_text(cells[5]) if len(cells) > 5 else ""
+            teacher_text = _cell_text(cells[3]) if len(cells) > 3 else ""
+            capacity_text = _cell_text(cells[4]) if len(cells) > 4 else ""
 
             # ── 匹配判断 ──
             matched = False
@@ -448,7 +450,7 @@ class GetCourse:
                 continue
 
             # ── 过滤条件：匹配的行也要检查是否可选 ──
-            status_text = cell_text(cells[8])
+            status_text = _cell_text(cells[8])
 
             if status_text in ("已选", "容量已满", "教学班已锁定"):
                 print(f"    班 {idx+1}: 跳过（匹配但{status_text}） {match_info}")
@@ -780,8 +782,9 @@ class APISelector:
 
     def __init__(self, driver):
         self.driver = driver
-        self._last_post_time = 0  # 上次 POST 时间戳
-        self._cached_token = None  # 缓存 token，避免重复提取
+        self._last_post_time = 0
+        self._cached_token = None
+        self._post_lock = __import__('threading').Lock()
 
     # ── Token ──
 
@@ -876,13 +879,14 @@ class APISelector:
 
         返回: (success: bool, message: str)
         """
-        # 限速保护
-        elapsed = time.time() - self._last_post_time
-        if elapsed < self.POST_COOLDOWN:
-            time.sleep(self.POST_COOLDOWN - elapsed)
+        # 限速保护（线程安全）
+        with self._post_lock:
+            elapsed = time.time() - self._last_post_time
+            if elapsed < self.POST_COOLDOWN:
+                time.sleep(self.POST_COOLDOWN - elapsed)
+            self._last_post_time = time.time()
 
         for attempt in range(1, 4):
-            self._last_post_time = time.time()
             data = self._browser_fetch(
                 "/api/enrollment/enrollment/student/select", "POST",
                 json.dumps({
@@ -1014,7 +1018,8 @@ class APISelector:
 
             if matched:
                 # 提交选课！
-                print(f"\n".join(matched_log[-10:]))  # 印最后10条跳过记录
+                if matched_log:
+                    print("\n".join(matched_log[-10:]))
                 print(f"  ✓ 选定: {class_nbr} 教师={instructor} "
                       f"标签={labels} 容量={selected_num}/{capacity}")
 
