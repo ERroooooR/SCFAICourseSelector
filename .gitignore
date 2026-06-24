@@ -1,2 +1,23 @@
-__pycache__/updateDriver.cpython-313.pyc
-chromedriver.exe
+# Python
+__pycache__/
+*.pyc
+
+# 虚拟环境
+venv/
+
+# ChromeDriver
+driver/
+
+# AI 工具缓存
+.codegraph/
+.playwright-mcp/
+.mcp.json
+reasonix.toml
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

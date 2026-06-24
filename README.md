@@ -1,80 +1,144 @@
-# SCFAI Course Selector
+# SCFAI 自动选课工具
 
-四川美术学院自动选课 (SCFAI Course Selector) 是一个基于Python和Selenium的自动化选课工具，旨在帮助学生更高效地选择课程。
+> 四川美术学院智慧教务自动选课 — Python + Selenium，跨平台，国内镜像开箱即用。
 
-## 功能特点
+## 快速开始
 
-- 根据预设课程列表自动选课
-- 支持定时抢课功能
-- 多线程处理提高选课效率
-- 自动处理弹窗和异常情况
+```bash
+# 1. 编辑 config.json，填你要选的课和时间
+# 2. 双击运行（会自动装依赖 + 下载匹配的 ChromeDriver）
 
-## 环境要求
+Windows: 双击 run_app_in_venv_windows.bat
+Linux:   bash setup.sh && bash run_app.sh
+```
 
-- Windows/Linux 操作系统
-- Google Chrome浏览器
-- Python 3.6+
+浏览器打开登录页 → **手动登录一次** → 等时间到自动抢课。
 
-## 安装指南
+---
 
-1. 安装Google Chrome浏览器（请从[官网](https://www.google.com/intl/zh-CN/chrome/)下载，不要修改默认安装目录）
-2. 安装Python
-3. 运行create_venv_windows.bat创建Python虚拟环境：
-4. 配置课程列表：
-   打开`main.py`文件，修改`courseList`字典，添加需要选择的课程：
+## 工作流程
 
-```python
-courseList = {
-    "体育1": "010567-039",
-    # 添加更多课程，格式为 "课程名称": "课程班号"
+```
+登录 → 直达选课列表 → 等时间到 → 双 Tab 并行抢课
+         │
+         ├─ Tab1 [轮询]  逐门遍历，全部失败后刷新重来
+         └─ Tab2 [激进]  锁定一门死磕，元素存在就不刷新
+```
+
+点击课程 → Modal 弹出 → 扫描教学班行 → 跳过时间冲突/满员/锁定 → 匹配标签/班号 → 选择确认
+
+---
+
+## 配置文件 `config.json`
+
+```json
+{
+    "begin_time": "2025-9-25 13:00:30",
+    "delay_time": 0.8,
+    "click_burst": 8,
+    "dual_mode": true,
+    "chrome_path": "",
+    "fuzzy_match": true,
+
+    "courses": {
+        "体育2": {
+            "label": "羽毛球",
+            "class_id": ""
+        }
+    }
 }
 ```
 
-## 使用方法
+### 配置项说明
 
-1. 配置选课时间： 在[main.py]()中的[Properties]()类里修改[begin]()变量，设置抢课开始时间：
+| 键 | 类型 | 说明 |
+|---|---|---|
+| `begin_time` | string | 抢课开始时间，格式 `YYYY-M-D HH:MM:SS` |
+| `delay_time` | float | 页面加载等待秒数，网络慢可调大 |
+| `click_burst` | int | 单门课一轮最多连击次数（不刷新） |
+| `dual_mode` | bool | `true`=双Tab并行(轮询+激进)，`false`=仅轮询 |
+| `chrome_path` | string | Chrome 路径，留空自动检测 |
+| `fuzzy_match` | bool | `true`=课程名模糊匹配（`"体育"` 可点 `"体育2"`），`false`=精确匹配 |
 
-```python
-begin = datetime.strptime("2025-09-24 17:52:00", "%Y-%m-%d %H:%M:%S")
+### 课程配置 `courses`
+
+```json
+"课程名": {
+    "label": "标签关键词",   // 模糊匹配教学班标签（如"羽毛球"匹配"羽毛球"）
+    "class_id": "班号"       // 模糊匹配教学班号（如"026"匹配"[理论]006653-026"）
+}
 ```
 
-2. 运行选课程序：
+- `label` 和 `class_id` 是 **OR 关系**，任意命中即匹配
+- 两者都为空 → 自动选第一个可用班（跳过冲突/满员/锁定）
+- 简写：`"体育2": "羽毛球"` 等价于 `{"label": "羽毛球", "class_id": ""}`
+
+### 自动回退逻辑
+
+Modal 内逐行扫描教学班，遇到以下情况**自动跳过**：
+
+| 跳过条件 | 标识 |
+|---------|------|
+| 已选 | 最后一列显示 `已选` |
+| 容量已满 | 最后一列显示 `容量已满`，如 `45 / 45` |
+| 教学班锁定 | `lock` 图标 + `教学班已锁定` |
+| 时间冲突 | `exclamation-circle` 感叹号图标 |
+
+跳过第一个 → 自动回退到第二个，直到找到符合条件且无冲突的行。
+
+---
+
+## 手动运行（高级）
+
+```bash
+# 单独更新 ChromeDriver
+python updateDriver.py
+
+# 启动抢课
+python main.py
+
+# 如果缺依赖
+pip install selenium requests -i https://pypi.tuna.tsinghua.edu.cn/simple
+```
+
+---
+
+## 文件结构
 
 ```
-run_app_in_venv_windows.bat
+├── main.py            # 主程序
+├── updateDriver.py    # ChromeDriver 自动下载（国内镜像优先）
+├── config.json        # 配置文件（编辑这个就行）
+├── driver/            # ChromeDriver 存放目录
+├── setup.bat / .sh    # 环境配置脚本（venv + 依赖 + driver）
+├── run_app_*.bat/.sh  # 一键启动脚本
+└── README.md
 ```
 
-3. 程序启动后会自动打开浏览器，您需要在登录页面手动输入账号密码登录
-4. 系统会自动导航到选课页面并在设定时间开始选课
+---
 
-## 配置说明
+## 常见问题
 
-### 主要配置项
+**Q: 两个 Tab 只有一个能用？**
 
-在[main.py]()的[Properties]()类中可以修改以下配置：
+A: 两个 Tab 共享同一 Chrome 实例（远程调试端口），只需在任意 Tab 登录一次。如端口 9222 冲突，改 `Properties.REMOTE_DEBUG_PORT`。
 
-* [begin](): 抢课开始时间
-* [DELAY\_TIME](): 页面加载延迟时间
-* [courseList](): 需要选择的课程列表
-* [google\_path](): Chrome浏览器路径（默认路径通常无需修改）
-* [chromedriver\_path](): ChromeDriver路径（默认无需修改）
+**Q: ChromeDriver 版本不匹配？**
 
-## 注意事项
+A: 脚本会自动检测本地 Chrome 版本并下载匹配的 ChromeDriver，优先走 npmmirror 国内镜像。也可手动 `python updateDriver.py`。
 
-1. 请确保Chrome浏览器安装在默认路径，否则需要修改[google\_path]()配置
-2. 如果遇到ChromeDriver版本不匹配问题，程序会自动尝试下载更新
-3. 请提前登录测试账号密码，确保能正常访问选课系统
-4. 建议在选课开始前几分钟运行程序，完成登录和页面加载
-5. 不要频繁运行程序，避免给选课系统造成过大压力
+**Q: 找不到 Chrome？**
+
+A: 装到默认路径，或在 `config.json` 中设 `chrome_path` 为你的 Chrome 可执行文件路径。
+
+**Q: Linux 权限错误？**
+
+A: `chmod +x driver/chromedriver`，脚本通常已自动设置。
+
+---
 
 ## 免责声明
 
-本工具仅供学习交流使用，请遵守学校相关规定，合理使用自动化工具。使用本工具造成的任何后果由使用者自行承担。
+本工具仅供学习交流，请遵守学校规定。使用后果由使用者自行承担。
 
-## 贡献
-
-欢迎提交Issue和Pull Request来改进这个项目。
-
-## 许可证
-
-本项目基于MIT许可证开源。
+MIT License
