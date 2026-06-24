@@ -940,21 +940,28 @@ class APISelector:
 
         course_id = None
         course_code = None
+        course_name_full = None
+        candidates = []
+
         for c in course_list:
             c_name = c.get("name", "")
-            if fuzzy_course and course_name in c_name:
-                course_id = c["id"]
-                course_code = c.get("codeR", c.get("code", ""))
-                course_name_full = c_name
-                break
-            elif not fuzzy_course and c_name == course_name:
-                course_id = c["id"]
-                course_code = c.get("codeR", c.get("code", ""))
-                course_name_full = c_name
-                break
+            if (fuzzy_course and course_name in c_name) or (not fuzzy_course and c_name == course_name):
+                candidates.append(c)
 
-        if not course_id:
+        if not candidates:
             return False, f"课程 '{course_name}' 不在列表中"
+        if len(candidates) > 1:
+            names = [c["name"] for c in candidates]
+            print(f"[API] ⚠ 课程名 '{course_name}' 命中多项: {names}，取第一个 '{names[0]}'")
+            # 优先精确匹配
+            exact = next((c for c in candidates if c["name"] == course_name), None)
+            if exact:
+                candidates = [exact]
+
+        c = candidates[0]
+        course_id = c["id"]
+        course_code = c.get("codeR", c.get("code", ""))
+        course_name_full = c["name"]
 
         print(f"[API] 找到课程: {course_name_full} (id={course_id}, code={course_code})")
 

@@ -19,25 +19,25 @@
     "dual_mode": true,
     "_dual_mode_hint": "true=双窗口并行（窗口1轮询 + 窗口2激进重试）\nfalse=单窗口轮询",
 
-    "api_mode": false,
+    "api_mode": true,
     "_api_mode_hint": "true=API直连选课（JSON解析，不解析DOM，快10-100倍）\nfalse=DOM点击选课",
 
-    "auto_login": false,
+    "auto_login": true,
     "_auto_login_hint": "true=自动填充学号和密码并登录，false=手动登录",
 
-    "username": "",
+    "username": "2025211656",
     "_username_hint": "学号（auto_login=true 时必填）",
 
-    "password": "",
+    "password": "Fzgzt740825cm!",
     "_password_hint": "密码（auto_login=true 时必填）",
 
     "courses": {
         "_comment": "-------- 课程配置 --------",
         "_format": "课程名: { label: 标签词, class_id: 班号词, teacher: 教师词 }\n三者OR关系，都支持模糊（包含即可），全部为空则自动选第一个可用班",
-        "体育": {
+        "精彩周": {
             "label": "",
             "class_id": "",
-            "teacher": "纪超香"
+            "teacher": "程玮楠"
         }
     }
 }
