@@ -1090,8 +1090,8 @@ class GetCourse:
         api = self.api_selector
         if not api:
             print("[混合] ⚠ 无 API 实例，降级为纯 DOM 轮询。")
-            # 降级：只跑 DOM
         else:
+            api.set_tag(self._tag)
             api._get_token()
 
         courses = list(self.courseList.keys())
@@ -1129,6 +1129,9 @@ class GetCourse:
                             time.sleep(0.5)
                         else:
                             fail_streak = 0
+                            # 课程列表失败/token过期等非业务错误，打印原因
+                            if msg and "无法获取" not in msg and "不在列表" not in msg:
+                                self._log(f"API: {msg}")
                             time.sleep(0.1)
                     else:
                         continue
