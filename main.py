@@ -1183,7 +1183,22 @@ class APISelector:
         )
         if token:
             token_hash = __import__('hashlib').md5(token.encode()).hexdigest()[:8]
-            self._log(f"Token 获取成功: {token[:20]}... (hash={token_hash})")
+            # 解码 JWT payload 看过期时间
+            try:
+                import base64
+                payload = token.split('.')[1]
+                # 补齐 padding
+                payload += '=' * (4 - len(payload) % 4)
+                decoded = json.loads(base64.urlsafe_b64decode(payload))
+                exp_ts = decoded.get('exp', 0)
+                if exp_ts:
+                    exp_dt = datetime.fromtimestamp(exp_ts)
+                    remaining = exp_dt - datetime.now()
+                    self._log(f"Token: {token[:20]}... (hash={token_hash}, 过期: {exp_dt.strftime('%H:%M:%S')}, 剩余: {remaining})")
+                    return token
+            except Exception:
+                pass
+            self._log(f"Token: {token[:20]}... (hash={token_hash})")
             return token
         self._log("Token 未找到，请确认已登录。")
         return None
