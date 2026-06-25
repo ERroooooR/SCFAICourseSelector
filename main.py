@@ -1297,10 +1297,12 @@ class APISelector:
             result = json.loads(raw)
             if result.get("ok"):
                 data = result.get("data")
-                # 检查 data 是否为有效课程数据
-                if not data or not isinstance(data, dict) or not data.get("data"):
-                    self._log(f"响应异常: status={result.get('status')} data_keys={list(data.keys()) if isinstance(data,dict) else type(data).__name__}")
-                return data
+                if data and isinstance(data, dict) and isinstance(data.get("data"), list):
+                    return data  # 正常课程数据
+                # 服务器返回错误
+                msg = data.get("msg", "") if isinstance(data, dict) else ""
+                self._log(f"服务器拒绝: msg='{msg}'")
+                return None
             else:
                 self._log(f"fetch 失败: {json.dumps(result, ensure_ascii=False)[:300]}")
                 return None
