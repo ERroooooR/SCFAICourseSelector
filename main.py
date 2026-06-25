@@ -1010,7 +1010,7 @@ class APISelector:
         # 3. 过滤 + 匹配
         matched_log = []
         for cls in classes:
-            labels = cls.get("classTagNameList", [])
+            labels = cls.get("classTagNameList") or []
             instructor = cls.get("instructorNames", "")
             class_nbr = cls.get("classNbr", "")
             selected_num = cls.get("selectedNum", 0)

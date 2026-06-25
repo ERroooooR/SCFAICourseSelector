@@ -25,3 +25,4 @@ Thumbs.db
 
 # 配置文件（含密码，不提交）
 config.json
+.json
