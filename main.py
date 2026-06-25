@@ -1295,15 +1295,9 @@ class APISelector:
             raw = self.driver.execute_async_script(js)
             result = json.loads(raw)
             if result.get("ok"):
-                data = result.get("data")
-                if data is None:
-                    self._log(f"fetch 返回 null data (可能是 401/403)")
-                elif isinstance(data, list) and len(data) == 0:
-                    self._log(f"fetch 返回空列表")
-                return data
+                return result.get("data")
             else:
-                err = result.get("error", "unknown")
-                self._log(f"fetch 失败: {err}")
+                self._log(f"fetch 失败: {result}")
                 return None
         except Exception as e:
             self._log(f"execute_async_script 异常: {e}")
@@ -1320,6 +1314,7 @@ class APISelector:
         path = f"/course-list?selectionSource={quote(selection_source)}"
         resp = self._api_request(path, "GET")
         if not resp or not isinstance(resp, dict):
+            self._log(f"get_course_list: 无效响应 resp={resp}")
             return []
         data_list = resp.get("data", [])
         courses = []
