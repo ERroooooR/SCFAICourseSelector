@@ -1041,6 +1041,7 @@ class GetCourse:
         pending = set(courses)
 
         PHASE_SECONDS = 20
+        DOM_PHASE_SECONDS = 10  # DOM 短一些，前端不稳定容易崩
 
         print(f"[混合] 开始交替（API↔DOM 各 {PHASE_SECONDS}s）...")
 
@@ -1078,14 +1079,14 @@ class GetCourse:
                 print(f"[混合] API: +{api_hit}，待选: {pending}")
 
             # ── Phase 2: DOM ──  （API 清零也至少跑一轮）
-            dom_deadline = time.time() + PHASE_SECONDS
+            dom_deadline = time.time() + DOM_PHASE_SECONDS
             dom_hit = 0
             dom_errors = 0
             dom_pending = pending.copy() if pending else set(courses)  # API 清零则全量验证
             if not pending:
-                print(f"[混合] ── DOM {PHASE_SECONDS}s ── API 已清零，DOM 全量验证...")
+                print(f"[混合] ── DOM {DOM_PHASE_SECONDS}s ── API 已清零，DOM 全量验证...")
             else:
-                print(f"[混合] ── DOM {PHASE_SECONDS}s ── 待选: {pending}")
+                print(f"[混合] ── DOM {DOM_PHASE_SECONDS}s ── 待选: {pending}")
 
             while time.time() < dom_deadline:
                 targets = list(dom_pending) if dom_pending else list(pending)
