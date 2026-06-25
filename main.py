@@ -1160,7 +1160,8 @@ class APISelector:
         self._cached_token = None
         self._post_lock = __import__('threading').Lock()
         self._proxy = api_proxy
-        self._tag = ""  # 由 GetCourse 设置
+        self._tag = ""
+        self._course_list_cache = None  # 课程列表缓存（同 session 不变）
 
     def set_tag(self, tag):
         """从 GetCourse 同步账号标签。"""
@@ -1262,8 +1263,14 @@ class APISelector:
 
     # ── API 端点 ──
 
-    def get_course_list(self, selection_source="主修"):
-        """获取课程列表，返回扁平化数组 [{id, name, codeR, selectionArea, courseCategory, ...}]。"""
+    def get_course_list(self, selection_source="主修", use_cache=True):
+        """获取课程列表，返回扁平化数组 [{id, name, codeR, selectionArea, courseCategory, ...}]。
+        
+        首次调用后缓存，同 session 内不会重复请求。
+        """
+        if use_cache and self._course_list_cache is not None:
+            return self._course_list_cache
+
         from urllib.parse import quote
         path = f"/api/enrollment/enrollment/course-list?selectionSource={quote(selection_source)}"
         resp = self._api_request(path, "GET")
@@ -1278,6 +1285,8 @@ class APISelector:
                     c["codeR"] = str(c["codeR"])
                 c["selectionArea"] = area_name
                 courses.append(c)
+        
+        self._course_list_cache = courses
         return courses
 
     def get_course_details(self, course_id, selection_source="主修"):
