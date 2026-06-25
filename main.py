@@ -711,15 +711,14 @@ class GetCourse:
                 except NoSuchElementException:
                     print("    未找到「选」按钮（非选课时间或无此步骤）。")
 
-                # 最终确认
+                # 最终确认（Ant Design 确认对话框 — Modal.confirm）
                 try:
                     confirm_2 = self.driver.find_element(By.XPATH,
-                        "//div[@class='ant-modal-confirm-btns']"
-                        "//button[.//span[contains(text(),'确')]]")
+                        "//div[contains(@class,'ant-modal-confirm')]"
+                        "//button[contains(@class,'ant-btn-primary')]")
                     confirm_2.click()
                     print("    已点击最终确认。")
                 except NoSuchElementException:
-                    # 某些课型 checkbox 即提交，或非选课时间不弹确认框
                     print("    未找到「确」按钮（非选课时间或 checkbox 即提交）。")
 
                 self.close()
