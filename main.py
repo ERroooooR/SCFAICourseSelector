@@ -1263,7 +1263,7 @@ class APISelector:
     # ── API 端点 ──
 
     def get_course_list(self, selection_source="主修"):
-        """获取课程列表，返回扁平化数组 [{id, name, codeR(→str), ...}]。"""
+        """获取课程列表，返回扁平化数组 [{id, name, codeR, selectionArea, courseCategory, ...}]。"""
         from urllib.parse import quote
         path = f"/api/enrollment/enrollment/course-list?selectionSource={quote(selection_source)}"
         resp = self._api_request(path, "GET")
@@ -1272,9 +1272,11 @@ class APISelector:
         data_list = resp.get("data", [])
         courses = []
         for area in (data_list if isinstance(data_list, list) else []):
+            area_name = area.get("selectionArea", "")
             for c in area.get("courseVOList", []) if isinstance(area, dict) else []:
                 if "codeR" in c:
                     c["codeR"] = str(c["codeR"])
+                c["selectionArea"] = area_name
                 courses.append(c)
         return courses
 
@@ -1289,9 +1291,15 @@ class APISelector:
                 return vos[0]["selectCourseVOList"]
         return []
 
-    def submit_selection(self, course_name, course_code, course_id, class_id,
-                         selection_source="主修"):
+    def submit_selection(self, course_data, class_id, selection_source="主修"):
         """提交选课请求（内置限速保护 + 自动退避）。
+
+        参数:
+            course_data: dict — 从 get_course_list 获取的完整课程信息，
+                         包含 courseName/courseCode/courseId/courseCategory/
+                         selectionArea/programType/courseNature/studyNature
+            class_id:    str  — 教学班 ID
+            selection_source: 选课来源
 
         返回: (success: bool, message: str)
         """
@@ -1307,11 +1315,20 @@ class APISelector:
                 "/api/enrollment/enrollment/student/select", "POST",
                 json.dumps({
                     "courses": [{
-                        "id": str(course_id),
-                        "checked": str(class_id),
-                        "classes": [{"classIds": [str(class_id)], "fakeClassTypeList": []}],
+                        "courseName": course_data.get("name", ""),
+                        "courseCode": course_data.get("codeR", ""),
+                        "courseId": str(course_data.get("id", "")),
+                        "courseCategory": course_data.get("courseCategory", ""),
+                        "selectionArea": course_data.get("selectionArea", ""),
+                        "programType": course_data.get("programType", "主修"),
+                        "courseNature": course_data.get("courseNature", ""),
+                        "studyNature": course_data.get("studyNature", "初修"),
+                        "classes": [{"classIds": [str(class_id)],
+                                     "fakeClassTypeList": []}],
+                        "selectedFakeClass": False,
                     }],
                     "selectionSource": selection_source,
+                    "reservation": False,
                 })
             )
 
@@ -1445,7 +1462,7 @@ class APISelector:
                       f"标签={labels} 容量={selected_num}/{capacity}")
 
                 success, msg = self.submit_selection(
-                    course_name_full, course_code, course_id, class_id, selection_source
+                    c, class_id, selection_source
                 )
                 if not success:
                     print(f"  [API] 提交失败: {msg} (class_id={class_id})")
