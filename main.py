@@ -968,48 +968,58 @@ class APISelector:
         print("[API] Token 未找到，请确认已登录。")
         return None
 
-    def _browser_fetch(self, url, method="GET", body=None):
-        """在浏览器中执行 fetch 并返回 JSON。自动注入 Bearer token。"""
+    def _api_request(self, path, method="GET", body=None):
+        """Python 原生 HTTP 请求（不走浏览器 JS），每次请求轮换代理。
+
+        path:   API 路径，如 "/api/enrollment/enrollment/course-list?..."
+        method: GET / POST
+        body:   JSON 字符串 (POST 时使用)
+
+        代理失败自动切换下一个；全部失败则直连兜底。
+        """
         if self._cached_token is None:
             self._cached_token = self._get_token()
         token = self._cached_token
 
-        auth_part = f"'Authorization':'Bearer {token}'," if token else ""
-        body_part = f"body:JSON.stringify({body})," if body else ""
+        url = f"https://jwjx.scfai.edu.cn{path}"
+        headers = {
+            "Authorization": f"Bearer {token}" if token else "",
+            "Accept": "application/json",
+        }
+        if body:
+            headers["Content-Type"] = "application/json"
+            data = body.encode("utf-8")
+        else:
+            data = None
 
-        wrapped = f"""
-        var done = arguments[arguments.length - 1];
-        fetch('{url}', {{
-            method: '{method}',
-            credentials: 'include',
-            headers: {{ {auth_part} 'Content-Type': 'application/json', 'Accept': 'application/json' }},
-            {body_part}
-        }}).then(function(r) {{
-            if (!r.ok) throw new Error('HTTP ' + r.status);
-            return r.json();
-        }}).then(function(data) {{
-            done(JSON.stringify({{ok: true, data: data}}));
-        }}).catch(function(err) {{
-            done(JSON.stringify({{ok: false, error: err.message || String(err)}}));
-        }});
-        """
-        try:
-            raw = self.driver.execute_async_script(wrapped)
-            result = json.loads(raw)
-            if result.get("ok"):
-                return result.get("data")
-            else:
-                err = result.get("error", "")
-                if "HTTP 401" in err and self._cached_token:
-                    # token 可能过期，清除缓存重新读取 localStorage
-                    print(f"[API] 401，Token 可能过期，重新读取...")
-                    self._cached_token = None
-                    return None
-                print(f"[API] fetch 失败: {err}")
-                return None
-        except Exception as e:
-            print(f"[API] execute_async_script 异常: {e}")
-            return None
+        # ── 代理轮换 ──
+        for attempt in range(5):
+            proxy_url = None
+            if self._proxy_pool and self._proxy_pool.proxies:
+                proxy_url = self._proxy_pool.next()
+
+            try:
+                req = __import__('urllib').request.Request(url, data=data, headers=headers, method=method)
+                if proxy_url:
+                    from urllib.request import ProxyHandler, build_opener, HTTPSHandler
+                    opener = build_opener(ProxyHandler({"https": proxy_url, "http": proxy_url}), HTTPSHandler)
+                    resp = opener.open(req, timeout=8)
+                else:
+                    resp = __import__('urllib').request.urlopen(req, timeout=8)
+
+                result = json.loads(resp.read().decode("utf-8"))
+                return result
+
+            except Exception as e:
+                err_msg = str(e)[:80]
+                if proxy_url:
+                    print(f"[API] 代理 {proxy_url} 失败: {err_msg}")
+                elif attempt == 0:
+                    print(f"[API] 直连失败: {err_msg}")
+                if not proxy_url and attempt >= 2:
+                    break  # 直连失败不重试太多
+
+        return None
 
     # ── API 端点 ──
 
