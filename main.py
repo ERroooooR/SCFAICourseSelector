@@ -1129,8 +1129,8 @@ class GetCourse:
                             time.sleep(0.5)
                         else:
                             fail_streak = 0
-                            # 课程列表失败/token过期等非业务错误，打印原因
-                            if msg and "无法获取" not in msg and "不在列表" not in msg:
+                            # 打印所有非"操作失败"的错误（token过期/课程列表失败等）
+                            if msg:
                                 self._log(f"API: {msg}")
                             time.sleep(0.1)
                     else:
