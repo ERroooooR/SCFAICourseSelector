@@ -1295,7 +1295,12 @@ class APISelector:
             raw = self.driver.execute_async_script(js)
             result = json.loads(raw)
             if result.get("ok"):
-                return result.get("data")
+                data = result.get("data")
+                if data is None:
+                    self._log(f"fetch 返回 null data (可能是 401/403)")
+                elif isinstance(data, list) and len(data) == 0:
+                    self._log(f"fetch 返回空列表")
+                return data
             else:
                 err = result.get("error", "unknown")
                 self._log(f"fetch 失败: {err}")
