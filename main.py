@@ -437,8 +437,8 @@ class GetCourse:
     LOGIN_POLL_INTERVAL = 2       # 等待登录时轮询间隔
     COUNTDOWN_LONG = 5            # 距开始 >10s 时的等待间隔
     COUNTDOWN_SHORT = 0.1         # 距开始 ≤10s 时的等待间隔
-    BURST_GAP = 0.3               # 轮询模式连击间隔
-    AGGRESSIVE_GAP = 0.2          # 激进模式重试间隔（过短可能触发限流）
+    BURST_GAP = 1.0               # 轮询模式连击间隔（≥1s 防 POST 限速）
+    AGGRESSIVE_GAP = 1.0          # 激进模式重试间隔（≥1s 防 POST 限速）
     AGGRESSIVE_REFRESH_GAP = 0.3  # 激进模式刷新后等待
     AGGRESSIVE_MAX_RETRIES = 300  # 单个课程最大连续重试次数（防死循环）
     MODAL_RENDER_GAP = 0.3        # Modal 表格渲染等待
@@ -640,6 +640,8 @@ class GetCourse:
                         "//button[.//span[contains(text(),'选')]]")
                     confirm_1.click()
                     print("    已点击初步选课确认。")
+                    # 「选」→「确」之间可能连续 POST，间隔 ≥1s 防限速
+                    time.sleep(1.0)
                 except NoSuchElementException:
                     print("    未找到「选」按钮（非选课时间或无此步骤）。")
 
