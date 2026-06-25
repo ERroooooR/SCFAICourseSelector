@@ -1267,7 +1267,10 @@ class APISelector:
         url = f"{GetCourse.API_BASE}{GetCourse.API_PREFIX}{path}"
         body_js = f", body: '{body}'" if body else ""
 
-        # 构建 JS fetch 代码（带 Token 兜底）
+        # 诊断：打印请求 URL
+        self._log(f"→ {method} {url}")
+
+        # 构建 JS fetch 代码
         js = f"""
         var done = arguments[arguments.length - 1];
         var token = localStorage.getItem('cqu_edu_ACCESS_TOKEN') || 
