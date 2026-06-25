@@ -477,11 +477,19 @@ class AccountRuntime:
 
 
 class GetCourse:
-    # ── URL 常量 ──
+    # ── URL / XPATH 常量（可覆盖）──
     login_url = "http://ids.scfai.edu.cn/#/login"
     dashboard_url = "http://ids.scfai.edu.cn/#/dashboard"
-    course_selection_url = "https://jwjx.scfai.edu.cn/enroll/Home"      # 备用
-    list_url = "https://jwjx.scfai.edu.cn/enroll/CourseStuSelectionList"  # 轮询页
+    course_selection_url = "https://jwjx.scfai.edu.cn/enroll/Home"
+    list_url = "https://jwjx.scfai.edu.cn/enroll/CourseStuSelectionList"
+    API_BASE = "https://jwjx.scfai.edu.cn"
+    API_PREFIX = "/api/enrollment/enrollment"
+
+    # ── Token 存储键 ──
+    TOKEN_KEYS = ["cqu_edu_ACCESS_TOKEN", "cqu_edu_CURRENT_TOKEN"]
+
+    # ── 限速判断模式（任一命中即认为被限速）──
+    RATE_LIMIT_PATTERNS = ["请求过于频繁", "操作频繁", "请稍后", "限流"]
 
     # ── 节奏常量 ──
     LOGIN_POLL_INTERVAL = 2       # 等待登录时轮询间隔
@@ -555,6 +563,31 @@ class GetCourse:
         except Exception:
             pass
 
+    def _scan_drawer_columns(self):
+        """扫描 Drawer 表格表头，返回 {列名: 列索引} 字典。
+
+        列名: '班号', '教师', '容量', '标签', '操作'
+        扫描失败返回默认回退值。
+        """
+        COL_MAP = {"教学班号": "班号", "上课教师": "教师",
+                    "已选/容量": "容量", "标签": "标签", "操作": "操作"}
+        FALLBACK = {"班号": 0, "教师": 3, "容量": 4, "标签": 5, "操作": 8}
+        try:
+            headers = self.driver.find_elements(By.XPATH,
+                "//div[contains(@class,'ant-drawer-body')]//table//th")
+            result = {}
+            for i, th in enumerate(headers):
+                txt = (th.get_attribute("textContent") or th.text or "").strip()
+                for key, short in COL_MAP.items():
+                    if key in txt:
+                        result[short] = i
+                        break
+            if len(result) >= 3:
+                return result
+        except Exception:
+            pass
+        return FALLBACK
+
     def select(self, name, force_dom=False):
         """ 执行选课 — API 模式下走 JSON，否则走 DOM 点击。
 
@@ -625,15 +658,23 @@ class GetCourse:
         print(f"  找到 {len(rows)} 个教学班，label='{target_label}' class_id='{target_cid}' teacher='{target_teacher}'")
 
         # 3. 遍历教学班行，找第一个可选的
+        cols = self._scan_drawer_columns()
+        col_banhao = cols.get("班号", 0)
+        col_teacher = cols.get("教师", 3)
+        col_capacity = cols.get("容量", 4)
+        col_label = cols.get("标签", 5)
+        col_action = cols.get("操作", 8)
+        MIN_COLS = max(col_banhao, col_teacher, col_capacity, col_action) + 1
+
         for idx, row in enumerate(rows):
             cells = row.find_elements(By.TAG_NAME, "td")
-            if len(cells) < 9:
+            if len(cells) < MIN_COLS:
                 continue
 
-            class_id_text = _cell_text(cells[0])
-            label_text = _cell_text(cells[5]) if len(cells) > 5 else ""
-            teacher_text = _cell_text(cells[3]) if len(cells) > 3 else ""
-            capacity_text = _cell_text(cells[4]) if len(cells) > 4 else ""
+            class_id_text = _cell_text(cells[col_banhao])
+            label_text = _cell_text(cells[col_label])
+            teacher_text = _cell_text(cells[col_teacher])
+            capacity_text = _cell_text(cells[col_capacity])
 
             # ── 匹配判断 ──
             matched = False
@@ -659,32 +700,36 @@ class GetCourse:
                 continue
 
             # ── 过滤条件：匹配的行也要检查是否可选 ──
-            status_text = _cell_text(cells[8])
+            status_text = _cell_text(cells[col_action])
 
             if status_text in ("已选", "容量已满", "教学班已锁定"):
                 print(f"    班 {idx+1}: 跳过（匹配但{status_text}） {match_info}")
                 continue
 
-            # Ant Design Drawer：checkbox 在最后一列，结构为 LABEL.ant-checkbox-wrapper > SPAN.ant-checkbox > INPUT.ant-checkbox-input
-            # 必须点击 LABEL 才能触发 React onChange
+            # 查找 checkbox（在操作列）
             cb_element = None
-            wrappers = cells[8].find_elements(By.XPATH, ".//label[contains(@class,'ant-checkbox-wrapper')]")
+            wrappers = cells[col_action].find_elements(By.XPATH,
+                ".//label[contains(@class,'ant-checkbox-wrapper')]")
             if wrappers:
                 cb_element = wrappers[0]
             if not cb_element:
-                checkboxes = cells[8].find_elements(By.XPATH, ".//input[@type='checkbox']")
+                checkboxes = cells[col_action].find_elements(By.XPATH,
+                    ".//input[@type='checkbox']")
                 if checkboxes:
                     cb_element = checkboxes[0]
             if not cb_element:
                 print(f"    班 {idx+1}: 跳过（匹配但无选择框） {match_info}")
                 continue
 
-            conflicts = cells[0].find_elements(By.XPATH, ".//*[contains(@aria-label,'exclamation-circle')]")
+            # 冲突和锁定图标在教学班号列
+            conflicts = cells[col_banhao].find_elements(By.XPATH,
+                ".//*[contains(@aria-label,'exclamation-circle')]")
             if conflicts:
                 print(f"    班 {idx+1}: 跳过（匹配但时间冲突） {match_info}")
                 continue
 
-            locks = cells[0].find_elements(By.XPATH, ".//*[contains(@aria-label,'lock')]")
+            locks = cells[col_banhao].find_elements(By.XPATH,
+                ".//*[contains(@aria-label,'lock')]")
             if locks:
                 print(f"    班 {idx+1}: 跳过（匹配但已锁定） {match_info}")
                 continue
@@ -1150,9 +1195,8 @@ class APISelector:
     """
 
     # 限速常量（服务器对 POST /student/select 有频率限制）
-    POST_COOLDOWN = 1.0       # 两次 POST 间最小间隔（秒）
-    POST_BACKOFF_MAX = 5.0    # 遇到限速时最大退避秒数
-    RATE_LIMIT_MSG = "请求过于频繁"  # 服务器限速提示
+    POST_COOLDOWN = 1.0
+    POST_BACKOFF_MAX = 5.0
 
     def __init__(self, driver, api_proxy=None):
         self.driver = driver
@@ -1178,9 +1222,11 @@ class APISelector:
     def _get_token(self):
         """从浏览器 localStorage 读取 Bearer token。"""
         token = self.driver.execute_script(
-            "var t = localStorage.getItem('cqu_edu_ACCESS_TOKEN') || "
-            "localStorage.getItem('cqu_edu_CURRENT_TOKEN');"
-            "if (t) { try { return JSON.parse(t); } catch(e) { return t; } }"
+            f"var keys = {GetCourse.TOKEN_KEYS};"
+            "for (var i = 0; i < keys.length; i++) {"
+            "  var t = localStorage.getItem(keys[i]);"
+            "  if (t) { try { return JSON.parse(t); } catch(e) { return t; } }"
+            "}"
             "return null;"
         )
         if token:
@@ -1348,7 +1394,7 @@ class APISelector:
             if data.get("ok") is True or data.get("status") == "success":
                 return True, "选课成功"
 
-            if self.RATE_LIMIT_MSG in msg:
+            if any(p in msg for p in GetCourse.RATE_LIMIT_PATTERNS):
                 wait = min(self.POST_COOLDOWN * (2 ** attempt), self.POST_BACKOFF_MAX)
                 self._log(f"限速退避: 等待 {wait:.1f}s 后重试 ({attempt}/3)")
                 time.sleep(wait)
