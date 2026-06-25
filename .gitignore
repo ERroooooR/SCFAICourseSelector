@@ -13,6 +13,7 @@ driver/
 .playwright-mcp/
 .mcp.json
 reasonix.toml
+.reasonix/
 
 # 系统文件
 .DS_Store
