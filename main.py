@@ -945,11 +945,12 @@ class APISelector:
     POST_BACKOFF_MAX = 5.0    # 遇到限速时最大退避秒数
     RATE_LIMIT_MSG = "请求过于频繁"  # 服务器限速提示
 
-    def __init__(self, driver):
+    def __init__(self, driver, proxy_pool=None):
         self.driver = driver
         self._last_post_time = 0
         self._cached_token = None
         self._post_lock = __import__('threading').Lock()
+        self._proxy_pool = proxy_pool  # ProxyPool 实例，None 则直连
 
     # ── Token ──
 
