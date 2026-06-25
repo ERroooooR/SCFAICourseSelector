@@ -1033,7 +1033,10 @@ class GetCourse:
 
         # 初始化 API
         api = self.api_selector
-        if api:
+        if not api:
+            print("[混合] ⚠ 无 API 实例，降级为纯 DOM 轮询。")
+            # 降级：只跑 DOM
+        else:
             api._get_token()
 
         courses = list(self.courseList.keys())
@@ -1045,28 +1048,30 @@ class GetCourse:
 
         while pending:
             # ── Phase 1: API ──
-            print(f"[混合] ── API 阶段 ── 待选: {pending}")
-            api_deadline = time.time() + PHASE_SECONDS
-            api_hit = 0
-            while time.time() < api_deadline and pending:
-                for course in list(pending):
-                    if time.time() >= api_deadline:
-                        break
-                    target = self.courseList[course]
-                    success, msg = api.find_and_select(course, target)
-                    if success:
-                        print(f"[混合] ✓ API: {course}")
-                        pending.discard(course)
-                        api_hit += 1
-                    time.sleep(0.1)
-            print(f"[混合] API 阶段: +{api_hit} 门，待选: {pending}")
-            if not pending:
-                break
+            if api:
+                print(f"[混合] ── API 阶段 ── 待选: {pending}")
+                api_deadline = time.time() + PHASE_SECONDS
+                api_hit = 0
+                while time.time() < api_deadline and pending:
+                    for course in list(pending):
+                        if time.time() >= api_deadline:
+                            break
+                        target = self.courseList[course]
+                        success, msg = api.find_and_select(course, target)
+                        if success:
+                            print(f"[混合] ✓ API: {course}")
+                            pending.discard(course)
+                            api_hit += 1
+                        time.sleep(0.1)
+                print(f"[混合] API 阶段: +{api_hit} 门，待选: {pending}")
+                if not pending:
+                    break
 
             # ── Phase 2: DOM ──
             print(f"[混合] ── DOM 阶段 ── 待选: {pending}")
             dom_deadline = time.time() + PHASE_SECONDS
             dom_hit = 0
+            dom_errors = 0
             while time.time() < dom_deadline and pending:
                 for course in list(pending):
                     if time.time() >= dom_deadline:
@@ -1081,10 +1086,12 @@ class GetCourse:
                                 print(f"[混合] ✓ DOM: {course}")
                                 pending.discard(course)
                                 dom_hit += 1
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        dom_errors += 1
+                        if dom_errors == 1:
+                            print(f"[混合] DOM 异常: {e}")
                     time.sleep(0.3)
-            print(f"[混合] DOM 阶段: +{dom_hit} 门，待选: {pending}")
+            print(f"[混合] DOM 阶段: +{dom_hit} 门 (异常{dom_errors}次)，待选: {pending}")
 
         print("[混合] 全部完成！")
 
