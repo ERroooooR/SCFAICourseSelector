@@ -603,7 +603,11 @@ class GetCourse:
                 print(f"    班 {idx+1}: 跳过（匹配但{status_text}） {match_info}")
                 continue
 
+            # Ant Design 表格：checkbox 在最后一列，可能是隐藏 input 或 span.ant-checkbox
             checkboxes = cells[8].find_elements(By.XPATH, ".//input[@type='checkbox']")
+            if not checkboxes:
+                # 回退：查找 ant-checkbox 容器
+                checkboxes = cells[8].find_elements(By.XPATH, ".//*[contains(@class,'ant-checkbox')]")
             if not checkboxes:
                 print(f"    班 {idx+1}: 跳过（匹配但无选择框） {match_info}")
                 continue
@@ -622,16 +626,14 @@ class GetCourse:
             reason = " + ".join(reason_parts)
             print(f"    班 {idx+1}: ✓ {reason} → {match_info} 容量={capacity_text}")
             try:
-                # 滚动到 checkbox 可见区域 + 等待可点击
+                # Ant Design checkbox 的 <input> 是隐藏的，需要用 JS 触发
                 self.driver.execute_script(
-                    "arguments[0].scrollIntoView({block:'center',inline:'center'});",
+                    "arguments[0].checked = true;"
+                    "arguments[0].dispatchEvent(new Event('change', {bubbles: true}));"
+                    "arguments[0].dispatchEvent(new MouseEvent('click', {bubbles: true}));",
                     checkboxes[0]
                 )
-                # 等待元素可交互（模态框动画完成）
-                WebDriverWait(self.driver, 5).until(
-                    EC.element_to_be_clickable(checkboxes[0])
-                )
-                checkboxes[0].click()
+                print("    已勾选复选框。")
 
                 # 初步确认（选课时间开启后才有此按钮）
                 try:
