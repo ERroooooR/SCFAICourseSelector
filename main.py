@@ -527,12 +527,17 @@ class GetCourse:
         target_cid  = (target.get("class_id", "") or "").strip()
         target_teacher = (target.get("teacher", "") or "").strip()
 
-        # 2. 等待 Modal 中的教学班表格出现
+        # 2. 等待 Modal 中的教学班表格出现（重试机制，应对 AJAX 延迟）
         row_xpath = (
             "//div[contains(@class,'select-class-info-modal')]"
             "//tbody[@class='ant-table-tbody']/tr"
         )
-        rows = self.driver.find_elements(By.XPATH, row_xpath)
+        rows = []
+        for retry in range(3):
+            rows = self.driver.find_elements(By.XPATH, row_xpath)
+            if rows:
+                break
+            time.sleep(0.4)
         if not rows:
             print(f"  未找到教学班列表，可能是页面加载问题。")
             self.close()
@@ -676,6 +681,18 @@ class GetCourse:
             if self.driver.current_url != list_url:
                 print(f"导航至选课列表: {list_url}")
                 self.driver.get(list_url)
+
+            # ── 等待主课程表格加载（防元素未渲染）──
+            try:
+                WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located(
+                        (By.XPATH, "//table//tbody//tr")
+                    )
+                )
+            except TimeoutException:
+                print("    警告: 主课程表格未加载，继续尝试...")
+                time.sleep(2)
+                continue
             time.sleep(self.runtime.DELAY_TIME if self.runtime else 0.8)
 
             temp_courses_to_check = []
