@@ -401,6 +401,7 @@ class AccountRuntime:
         project_root = os.path.dirname(os.path.abspath(__file__))
         safe_name = self.username or f"account_{acct_cfg['index']}"
         self.user_data_dir = os.path.join(project_root, "chrome_data", safe_name)
+        print(f"[{self.name}] user_data_dir: {self.user_data_dir}")
 
         # ── 本账号内部的登录完成信号（用于双 Tab 同步）──
         self._login_done = Event()
@@ -1061,7 +1062,8 @@ class APISelector:
             "return null;"
         )
         if token:
-            print(f"[API] Token 获取成功: {token[:20]}...")
+            token_hash = __import__('hashlib').md5(token.encode()).hexdigest()[:8]
+            print(f"[API] Token 获取成功: {token[:20]}... (hash={token_hash})")
             return token
         print("[API] Token 未找到，请确认已登录。")
         return None
