@@ -1691,13 +1691,13 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         print("\n用户中断。正在关闭所有浏览器...")
 
-    # ── 清理 ──
+    # ── 清理（断开 driver 连接，但保持浏览器窗口）──
     for rt in runtimes:
         for d in rt.drivers:
             try:
-                d.quit()
+                d.close()  # 只关当前 Tab
             except Exception:
                 pass
-    print("所有浏览器已关闭。")
+    print("选课结束，浏览器窗口已保留。")
 
 
