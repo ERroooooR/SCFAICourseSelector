@@ -510,24 +510,29 @@ class GetCourse:
             print(*args)
 
     def _course_title_xpath(self, name, course_code=""):
-        """根据模糊/精确模式生成课程标题 XPath。引号自动转义。
-        
-        当提供 course_code 时，同时匹配课程代码列，用于区分同名不同码的课程。
+        """生成课程标题列 XPath。兼容 <a> 和 <generic>/<span> 等渲染方式。
+
+        当提供 course_code 时，同时匹配第 2 列课程代码过滤同名课程。
         """
         safe = name.replace('"', '').replace("'", '')
-        safe_code = course_code.replace('"', '').replace("'", '') if course_code else ""
+
+        # 点击目标：包含课程名的可点击元素（a / span / generic 等），限表格内
+        clickable = (
+            f"//td//*[contains(@title,'{safe}') or contains(text(),'{safe}')]"
+        )
 
         if course_code:
-            # 主表格 row + 课程代码列定位（代码在第2列 td[2]）
+            safe_code = course_code.replace('"', '').replace("'", '')
+            # 行级定位：课程名（任意元素） + 第 2 列课程代码
             return (
-                f'//tr[td//a[contains(@title, "{safe}")]'
-                f' and td[2][contains(., "{safe_code}")]]'
-                f'//a[contains(@title, "{safe}")]'
+                f"//tr[td//*[contains(@title,'{safe}') or contains(text(),'{safe}')]"
+                f" and td[2][contains(.,'{safe_code}')]]"
+                f"//*[contains(@title,'{safe}') or contains(text(),'{safe}')]"
             )
         elif self.fuzzy_match:
-            return f'//a[contains(@title, "{safe}")]'
+            return f"//*[contains(@title,'{safe}') or contains(text(),'{safe}')]"
         else:
-            return f'//a[@title="{safe}"]'
+            return f"//*[@title='{safe}' or text()='{safe}']"
 
     def wait(self, retries=1, *element):
         """ 显式等待 - 单元素 """
@@ -587,6 +592,11 @@ class GetCourse:
             else:
                 raise
         course_link.click()
+        # JS fallback: 非 <a> 元素可能 click() 无效
+        try:
+            self.driver.execute_script("arguments[0].click();", course_link)
+        except Exception:
+            pass
         print(f"已点击课程: {name}" + (f" ({course_code})" if course_code else ""))
 
         # 等待 Modal 渲染
@@ -667,10 +677,15 @@ class GetCourse:
 
             # Ant Design 表格：checkbox 在最后一列，可能是隐藏 input 或 span.ant-checkbox
             checkboxes = cells[8].find_elements(By.XPATH, ".//input[@type='checkbox']")
-            if not checkboxes:
-                # 回退：查找 ant-checkbox 容器
-                checkboxes = cells[8].find_elements(By.XPATH, ".//*[contains(@class,'ant-checkbox')]")
-            if not checkboxes:
+            cb_element = None
+            if checkboxes:
+                cb_element = checkboxes[0]
+            if not cb_element:
+                # 回退：查找 ant-checkbox 容器（Ant Design 真实点击目标）
+                ant_cbs = cells[8].find_elements(By.XPATH, ".//*[contains(@class,'ant-checkbox')]")
+                if ant_cbs:
+                    cb_element = ant_cbs[0]
+            if not cb_element:
                 print(f"    班 {idx+1}: 跳过（匹配但无选择框） {match_info}")
                 continue
 
@@ -688,13 +703,21 @@ class GetCourse:
             reason = " + ".join(reason_parts)
             print(f"    班 {idx+1}: ✓ {reason} → {match_info} 容量={capacity_text}")
             try:
-                # Ant Design checkbox 的 <input> 是隐藏的，需要用 JS 触发
-                self.driver.execute_script(
-                    "arguments[0].checked = true;"
-                    "arguments[0].dispatchEvent(new Event('change', {bubbles: true}));"
-                    "arguments[0].dispatchEvent(new MouseEvent('click', {bubbles: true}));",
-                    checkboxes[0]
-                )
+                # 点击复选框：ant-checkbox span 用 Selenium click（触发 React），
+                # 隐藏 input 用 JS（直接改 checked 属性）
+                tag = cb_element.tag_name.lower()
+                if tag == 'input':
+                    self.driver.execute_script(
+                        "arguments[0].checked = true;"
+                        "arguments[0].dispatchEvent(new Event('change', {bubbles: true}));"
+                        "arguments[0].dispatchEvent(new MouseEvent('click', {bubbles: true}));",
+                        cb_element
+                    )
+                else:
+                    # ant-checkbox span/label — 原生 click 触发 React onChange
+                    self.driver.execute_script(
+                        "arguments[0].scrollIntoView({block:'center'});", cb_element)
+                    cb_element.click()
                 print("    已勾选复选框。")
 
                 # 初步确认（选课时间开启后才有此按钮）
