@@ -342,8 +342,10 @@ class AccountRuntime:
         # ── 本账号内部的登录完成信号（用于双 Tab 同步）──
         self._login_done = Event()
 
-        # ── 代理 ──
-        self.proxy = _pick_proxy(global_cfg.get("proxies", []), acct_cfg["index"])
+        # ── 代理池（API 专用，不影响浏览器）──
+        self.api_proxy_pool = None
+        if global_cfg.get("proxies"):
+            self.api_proxy_pool = ProxyPool(global_cfg["proxies"])
 
         # ── WebDriver 列表 ──
         self.drivers = []
@@ -388,9 +390,9 @@ class AccountRuntime:
             options.add_argument(f"--remote-debugging-port={self.REMOTE_DEBUG_PORT}")
             options.add_argument(f"--user-data-dir={self.user_data_dir}")
 
-            if self.proxy:
-                options.add_argument(f"--proxy-server={self.proxy}")
-                print(f"[{self.name}] 代理: {self.proxy}")
+            if self.api_proxy_pool:
+                # 代理仅用于 API 请求，不注入 Chrome
+                pass
 
         try:
             return webdriver.Chrome(options=options, service=service)
@@ -1013,15 +1015,14 @@ class APISelector:
     def get_course_list(self, selection_source="主修"):
         """获取课程列表，返回扁平化数组 [{id, name, codeR(→str), ...}]。"""
         from urllib.parse import quote
-        url = f"/api/enrollment/enrollment/course-list?selectionSource={quote(selection_source)}"
-        resp = self._browser_fetch(url, "GET")
+        path = f"/api/enrollment/enrollment/course-list?selectionSource={quote(selection_source)}"
+        resp = self._api_request(path, "GET")
         if not resp:
             return []
         data_list = resp.get("data", [])
         courses = []
         for area in data_list:
             for c in area.get("courseVOList", []):
-                # codeR 可能是整数，统一转字符串
                 if "codeR" in c:
                     c["codeR"] = str(c["codeR"])
                 courses.append(c)
@@ -1030,8 +1031,8 @@ class APISelector:
     def get_course_details(self, course_id, selection_source="主修"):
         """获取教学班详情，返回 selectCourseVOList。"""
         from urllib.parse import quote
-        url = f"/api/enrollment/enrollment/courseDetails/{course_id}?selectionSource={quote(selection_source)}"
-        data = self._browser_fetch(url, "GET")
+        path = f"/api/enrollment/enrollment/courseDetails/{course_id}?selectionSource={quote(selection_source)}"
+        data = self._api_request(path, "GET")
         if data and "selectCourseListVOs" in data:
             vos = data["selectCourseListVOs"]
             if vos and "selectCourseVOList" in vos[0]:
@@ -1052,7 +1053,7 @@ class APISelector:
             self._last_post_time = time.time()
 
         for attempt in range(1, 4):
-            data = self._browser_fetch(
+            data = self._api_request(
                 "/api/enrollment/enrollment/student/select", "POST",
                 json.dumps({
                     "courses": [{
@@ -1239,13 +1240,13 @@ def run_account(runtime):
     api_agg = None
     if api_mode:
         print(f"[{name}] === API 直连模式（双 Tab 均用 API）===")
-        api_poll = APISelector(drivers[0])
+        api_poll = APISelector(drivers[0], proxy_pool=rt.api_proxy_pool)
         if dual_mode and len(drivers) >= 2:
-            api_agg = APISelector(drivers[1])
+            api_agg = APISelector(drivers[1], proxy_pool=rt.api_proxy_pool)
     elif rt.mixed_mode:
         print(f"[{name}] === 混合模式（轮询=DOM, 激进=API）===")
         if dual_mode and len(drivers) >= 2:
-            api_agg = APISelector(drivers[1])
+            api_agg = APISelector(drivers[1], proxy_pool=rt.api_proxy_pool)
 
     # 每个窗口独立队列
     courses = list(courseList.keys())
