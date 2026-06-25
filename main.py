@@ -812,11 +812,11 @@ class GetCourse:
             print(f"[{label}] 4. 等待选课时间 {begin}...")
             while datetime.now() <= begin:
                 remaining = (begin - datetime.now()).total_seconds()
-            if remaining > 10:
-                print(f"[{label}]    距开始还有 {remaining:.0f} 秒")
-                time.sleep(self.COUNTDOWN_LONG)
-            else:
-                time.sleep(self.COUNTDOWN_SHORT)
+                if remaining > 10:
+                    print(f"[{label}]    距开始还有 {remaining:.0f} 秒")
+                    time.sleep(self.COUNTDOWN_LONG)
+                else:
+                    time.sleep(self.COUNTDOWN_SHORT)
         print(f"[{label}]    时间到！")
 
     def run_poll(self, courseQueue):
