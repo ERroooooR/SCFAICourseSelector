@@ -501,19 +501,20 @@ class GetCourse:
                 )
                 checkboxes[0].click()
 
-                # 初步确认（部分课型没有此按钮）
+                # 初步确认（选课时间开启后才有此按钮）
                 try:
                     confirm_1 = self.driver.find_element(By.XPATH,
+                        "//div[@class='select-class-info-modal']"
                         "//button[.//span[contains(text(),'选')]]")
                     confirm_1.click()
                     print("    已点击初步选课确认。")
                 except NoSuchElementException:
-                    print("    无需初步确认（该课型直接提交）。")
+                    print("    未找到「选」按钮（可能非选课时间或该课型无需初步确认）。")
 
                 # 最终确认
                 confirm_2 = self.driver.find_element(By.XPATH,
-                    "//*[contains(@class,'ant-modal-confirm')]"
-                    "//button[.//span[contains(text(),'确') or contains(text(),'OK')]]")
+                    "//div[@class='ant-modal-confirm-btns']"
+                    "//button[.//span[contains(text(),'确')]]")
                 confirm_2.click()
                 print("    已点击最终确认。")
 
