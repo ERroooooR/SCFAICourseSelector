@@ -1265,6 +1265,7 @@ class APISelector:
         body:   JSON 字符串 (POST 时)
         """
         url = f"{GetCourse.API_BASE}{GetCourse.API_PREFIX}{path}"
+        body_js = f", body: '{body}'" if body else ""
 
         # 构建 JS fetch 代码（带 Token 兜底）
         js = f"""
