@@ -1265,10 +1265,19 @@ class APISelector:
         """
         url = f"{GetCourse.API_BASE}{GetCourse.API_PREFIX}{path}"
         body_js = f", body: '{body}'" if body else ""
+        self._log(f"→ {method} {url.split('?')[0]}")
+
+        for attempt in range(4):
+            if attempt > 0:
+                time.sleep(1.0 * attempt)  # 退避: 1s, 2s, 3s
 
         self._log(f"→ {method} {url}")
 
-        js = f"""
+        for attempt in range(4):
+            if attempt > 0:
+                time.sleep(1.0 * attempt)
+
+            js = f"""
         var done = arguments[arguments.length - 1];
         var token = localStorage.getItem('cqu_edu_ACCESS_TOKEN') || 
                     localStorage.getItem('cqu_edu_CURRENT_TOKEN') || '';
@@ -1292,23 +1301,29 @@ class APISelector:
             done(JSON.stringify({{ok: false, error: err.message || String(err)}}));
         }});
         """
-        try:
-            raw = self.driver.execute_async_script(js)
-            result = json.loads(raw)
-            if result.get("ok"):
-                data = result.get("data")
-                if data and isinstance(data, dict) and isinstance(data.get("data"), list):
-                    return data  # 正常课程数据
-                # 服务器返回错误
-                msg = data.get("msg", "") if isinstance(data, dict) else ""
-                self._log(f"服务器拒绝: msg='{msg}'")
+            try:
+                raw = self.driver.execute_async_script(js)
+                result = json.loads(raw)
+                if result.get("ok"):
+                    data = result.get("data")
+                    if data and isinstance(data, dict) and isinstance(data.get("data"), list):
+                        return data  # 正常
+                    msg = data.get("msg", "") if isinstance(data, dict) else ""
+                    if any(p in msg for p in GetCourse.RATE_LIMIT_PATTERNS):
+                        if attempt == 0:
+                            self._log(f"限速({msg})，自动重试...")
+                        continue  # 重试
+                    self._log(f"→ 服务器: msg='{msg}'")
+                    return None
+                else:
+                    self._log(f"fetch 失败: {json.dumps(result, ensure_ascii=False)[:200]}")
+                    return None
+            except Exception as e:
+                self._log(f"异常: {e}")
                 return None
-            else:
-                self._log(f"fetch 失败: {json.dumps(result, ensure_ascii=False)[:300]}")
-                return None
-        except Exception as e:
-            self._log(f"execute_async_script 异常: {e}")
-            return None
+
+        self._log(f"→ 已达最大重试(4次)")
+        return None
 
     # ── API 端点 ──
 
