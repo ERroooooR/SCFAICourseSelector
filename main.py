@@ -1305,8 +1305,10 @@ class APISelector:
         from urllib.parse import quote
         path = f"/courseDetails/{course_id}?selectionSource={quote(selection_source)}"
         data = self._api_request(path, "GET")
-        if data and "selectCourseListVOs" in data:
-            vos = data["selectCourseListVOs"]
+        # data 是服务器 JSON: {"status":"success","data":{"selectCourseListVOs":[...]},...}
+        inner = (data or {}).get("data", {}) if isinstance(data, dict) else {}
+        if inner and "selectCourseListVOs" in inner:
+            vos = inner["selectCourseListVOs"]
             if vos and "selectCourseVOList" in vos[0]:
                 return vos[0]["selectCourseVOList"]
         return []
