@@ -551,14 +551,10 @@ class GetCourse:
         return False
 
     def circle(self, courseQueue):
-        """ 循环尝试选课 — 直接轮询 CourseStuSelectionList 页面。
-
-        前端容易崩溃，策略是「多击少刷」：
-        - 同一个课程连点 N 次，中间不刷新
-        - 连点全部失败才刷新页面
-        """
+        """ 循环尝试选课 — API 模式下单次快速，DOM 模式下多击少刷。"""
         list_url = self.list_url
-        CLICK_BURST = Properties.CLICK_BURST   # 从配置读取
+        burst = 1 if self.api_selector else Properties.CLICK_BURST
+        gap = 0.05 if self.api_selector else self.BURST_GAP
 
         while True:
             # 直接进入选课列表页（不走 UI 点击链路）
@@ -573,14 +569,14 @@ class GetCourse:
                 print(f"正在尝试选择: {courseName}")
 
                 select_result = False
-                for attempt in range(1, CLICK_BURST + 1):
+                for attempt in range(1, burst + 1):
                     try:
                         if self.select(courseName):
                             select_result = True
                             break
                     except Exception as e:
-                        print(f"  {courseName} 第 {attempt}/{CLICK_BURST} 次点击异常: {e}")
-                    time.sleep(self.BURST_GAP)
+                        print(f"  {courseName} 第 {attempt}/{burst} 次点击异常: {e}")
+                    time.sleep(gap)
 
                 temp_courses_to_check.append((courseName, select_result))
 
