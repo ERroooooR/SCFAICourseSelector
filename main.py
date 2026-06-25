@@ -1052,6 +1052,7 @@ class GetCourse:
                 print(f"[混合] ── API {PHASE_SECONDS}s ── 待选: {pending}")
                 api_deadline = time.time() + PHASE_SECONDS
                 api_hit = 0
+                fail_streak = 0  # 连续"操作失败"计数
                 while time.time() < api_deadline and pending:
                     for course in list(pending):
                         if time.time() >= api_deadline:
@@ -1062,7 +1063,20 @@ class GetCourse:
                             print(f"[混合] ✓ API: {course}")
                             pending.discard(course)
                             api_hit += 1
-                        time.sleep(0.1)
+                            fail_streak = 0
+                        elif "操作失败" in msg:
+                            fail_streak += 1
+                            if fail_streak >= 3:
+                                print(f"[混合] API 连续{fail_streak}次操作失败，等待 DOM 阶段...")
+                                time.sleep(1)
+                                break  # 退出当前 API 阶段
+                            time.sleep(0.5)
+                        else:
+                            fail_streak = 0
+                            time.sleep(0.1)
+                    else:
+                        continue
+                    break  # 内层 break 传到这里，退出外层 while
                 print(f"[混合] API: +{api_hit}，待选: {pending}")
 
             # ── Phase 2: DOM ──  （API 清零也至少跑一轮）
@@ -1087,7 +1101,7 @@ class GetCourse:
                             self.driver.get(list_url)
                             time.sleep(self.runtime.DELAY_TIME if self.runtime else 0.8)
 
-                        if self.select(course):
+                        if self.select(course, force_dom=True):
                             if self.isSelected(course):
                                 print(f"[混合] ✓ DOM: {course}")
                                 pending.discard(course)
