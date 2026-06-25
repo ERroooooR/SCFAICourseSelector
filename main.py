@@ -59,8 +59,6 @@ def load_config():
     if accounts_cfg:
         # ── 新格式：global + accounts[] ──
         global_cfg = cfg.get("global", {})
-        proxy_list = cfg.get("proxies", [])
-        global_cfg["proxies"] = proxy_list
         global_cfg = _parse_global(global_cfg, config_path)
         parsed_accounts = []
         for i, acct in enumerate(accounts_cfg):
@@ -70,23 +68,27 @@ def load_config():
     else:
         # ── 旧格式：单账号 ──
         global_cfg = _parse_global(cfg, config_path)
-        global_cfg["proxies"] = []
         parsed = _parse_account(cfg, global_cfg, 0)
         return global_cfg, [parsed]
 
 
 def _parse_global(cfg, config_path=None):
     """解析公共配置。"""
-    begin_time = datetime.strptime(
-        cfg.get("begin_time", "2025-9-25 13:00:30"), "%Y-%m-%d %H:%M:%S"
-    )
+    begin_time_raw = cfg.get("begin_time", "2025-9-25 13:00:30")
+    try:
+        begin_time = datetime.strptime(begin_time_raw, "%Y-%m-%d %H:%M:%S")
+    except ValueError as e:
+        source = f" ({config_path})" if config_path else ""
+        raise ValueError(
+            f"begin_time 格式错误{source}: {begin_time_raw!r}，"
+            "请使用 YYYY-MM-DD HH:MM:SS，例如 2025-09-25 13:00:30"
+        ) from e
     return {
         "begin_time": begin_time,
         "delay_time": float(cfg.get("delay_time", 0.8)),
         "click_burst": int(cfg.get("click_burst", 5)),
         "chrome_path": cfg.get("chrome_path", "").strip() or None,
         "fuzzy_match": bool(cfg.get("fuzzy_match", False)),
-        "proxies": cfg.get("proxies", []),
     }
 
 
@@ -139,7 +141,6 @@ def _create_default_config(path):
             "chrome_path": "",
             "fuzzy_match": True
         },
-        "proxies": [],
         "accounts": [
             {
                 "name": "张三",
@@ -166,7 +167,7 @@ def _create_default_config(path):
     print(f"已创建默认配置文件: {path}")
 
 # ============================================================
-# 跨平台路径检测 & 代理池
+# 跨平台路径检测
 # ============================================================
 
 def _port_in_use(port):
@@ -176,103 +177,14 @@ def _port_in_use(port):
         return s.connect_ex(('127.0.0.1', port)) == 0
 
 
-def _test_proxy(proxy_url, timeout=5):
-    """测试代理是否可用（通过 SOCKS/HTTP 连接目标服务器）。
-
-    返回: (proxy_url, True/False, latency_ms)
-    """
-    import socket
-    import urllib.parse
-
-    parsed = urllib.parse.urlparse(proxy_url)
-    host = parsed.hostname
-    port = parsed.port
-    scheme = parsed.scheme
-
-    if not host or not port:
-        return (proxy_url, False, 0)
-
+def _to_int(value, default=0):
+    """宽松转换接口返回的数字字段。"""
     try:
-        start = time.time()
-        sock = socket.create_connection((host, port), timeout=timeout)
-        latency = int((time.time() - start) * 1000)
-        sock.close()
-        return (proxy_url, True, latency)
-    except Exception as e:
-        return (proxy_url, False, 0)
-
-
-def _filter_alive_proxies(proxy_list, max_test=20, timeout=3):
-    """快速筛选可用代理。最多测试 max_test 个，返回可用列表。"""
-    if not proxy_list:
-        return []
-
-    print(f"正在测试代理连通性（最多 {max_test} 个）...")
-    alive = []
-    test_list = proxy_list[:max_test]
-
-    # 并发测试（线程池）
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    with ThreadPoolExecutor(max_workers=min(10, len(test_list))) as executor:
-        futures = {executor.submit(_test_proxy, p, timeout): p for p in test_list}
-        for future in as_completed(futures):
-            proxy, ok, latency = future.result()
-            if ok:
-                alive.append(proxy)
-                print(f"  ✓ {proxy} ({latency}ms)")
-            else:
-                print(f"  ✗ {proxy} (不可达)")
-
-    print(f"可用代理: {len(alive)}/{len(test_list)}")
-    return alive
-    """代理轮询池，支持自动淘汰死代理。
-
-    用法:
-        pool = ProxyPool(["http://1.2.3.4:8080", "socks5://5.6.7.8:1080"])
-        proxy = pool.next()   # 轮询取代理
-        pool.mark_dead(proxy) # 标记死亡（本次会话不再使用）
-     """
-
-    def __init__(self, proxy_list):
-        self._alive = list(proxy_list) if proxy_list else []
-        self._dead = set()
-        self._index = 0
-        self._lock = __import__('threading').Lock()
-        self._consecutive_failures = 0
-        self._max_consecutive_failures = 5  # 连续失败 N 次后全部跳过
-
-    @property
-    def proxies(self):
-        """当前可用代理列表（排除已标记死亡的）。"""
-        return self._alive
-
-    def next(self):
-        """返回下一个可用代理 URL，全部不可用则返回 None。"""
-        if not self._alive:
-            return None
-        if self._consecutive_failures >= self._max_consecutive_failures:
-            return None  # 连续多次失败，放弃所有代理
-        with self._lock:
-            for _ in range(len(self._alive)):
-                proxy = self._alive[self._index % len(self._alive)]
-                self._index += 1
-                if proxy not in self._dead:
-                    return proxy
-        return None
-
-    def mark_dead(self, proxy):
-        """标记代理为死亡，本次会话不再使用。"""
-        with self._lock:
-            self._dead.add(proxy)
-            self._consecutive_failures += 1
-            alive = [p for p in self._alive if p not in self._dead]
-            print(f"[代理] {proxy} 已淘汰 (存活 {len(alive)}/{len(self._alive)})")
-
-    def __bool__(self):
-        return bool([p for p in self._alive if p not in self._dead])
-
-    def __len__(self):
-        return len([p for p in self._alive if p not in self._dead])
+        if value is None or value == "":
+            return default
+        return int(float(str(value).strip()))
+    except (TypeError, ValueError):
+        return default
 
 
 def _find_chrome_binary():
@@ -406,12 +318,6 @@ class AccountRuntime:
         # ── 本账号内部的登录完成信号（用于双 Tab 同步）──
         self._login_done = Event()
 
-        # ── 代理（每个账号绑定一个专属代理，不共享）──
-        proxies = global_cfg.get("proxies", [])
-        self.api_proxy = proxies[acct_cfg["index"] % len(proxies)] if proxies else None
-        if self.api_proxy:
-            print(f"[{self.name}] 专属代理: {self.api_proxy}")
-
         # ── WebDriver 列表 ──
         self.drivers = []
 
@@ -434,7 +340,7 @@ class AccountRuntime:
                 print(f"[{self.name}] 附加 Tab {i+1} 失败: {e}")
 
     def _create_driver(self, attach_to_existing=False):
-        """创建 Chrome WebDriver，支持独立 user-data-dir 和代理。"""
+        """创建 Chrome WebDriver，支持独立 user-data-dir。"""
         if not self.google_path:
             raise RuntimeError(
                 f"[{self.name}] 未找到 Chrome 浏览器。\n"
@@ -451,13 +357,10 @@ class AccountRuntime:
             options.add_experimental_option("debuggerAddress",
                                             f"127.0.0.1:{self.REMOTE_DEBUG_PORT}")
         else:
-            # 首次启动：独立 user-data-dir + 调试端口 + 代理
+            # 首次启动：独立 user-data-dir + 调试端口
             options.add_argument(f"--remote-debugging-port={self.REMOTE_DEBUG_PORT}")
             options.add_argument(f"--user-data-dir={self.user_data_dir}")
-
-            if self.api_proxy:
-                # 代理仅用于 API 请求，不注入 Chrome
-                pass
+            options.add_experimental_option("detach", True)
 
         try:
             return webdriver.Chrome(options=options, service=service)
@@ -496,9 +399,12 @@ class GetCourse:
     PROGRAM_TYPE = "主修"
     STUDY_NATURE = "初修"
     LOGIN_POLL_INTERVAL = 2       # 等待登录时轮询间隔
+    LOGIN_TIMEOUT = 300           # 登录最长等待秒数
+    SECONDARY_LOGIN_TIMEOUT = 330 # 副 Tab 等待主 Tab 登录最长秒数
     COUNTDOWN_LONG = 5            # 距开始 >10s 时的等待间隔
     COUNTDOWN_SHORT = 0.1         # 距开始 ≤10s 时的等待间隔
     BURST_GAP = 1.0               # 轮询模式连击间隔（≥1s 防 POST 限速）
+    CIRCLE_MAX_ROUNDS = 300       # 轮询模式最大轮次，避免永久空转
     AGGRESSIVE_GAP = 1.0          # 激进模式重试间隔（≥1s 防 POST 限速）
     AGGRESSIVE_REFRESH_GAP = 0.3  # 激进模式刷新后等待
     AGGRESSIVE_MAX_RETRIES = 300  # 单个课程最大连续重试次数（防死循环）
@@ -816,29 +722,32 @@ class GetCourse:
         burst = 1 if self.api_selector else (self.runtime.CLICK_BURST if self.runtime else 5)
         gap = 0.05 if self.api_selector else self.BURST_GAP
 
-        while True:
+        rounds = 0
+        while rounds < self.CIRCLE_MAX_ROUNDS:
+            rounds += 1
             # 直接进入选课列表页（不走 UI 点击链路）
             if self.driver.current_url != list_url:
                 print(f"导航至选课列表: {list_url}")
                 self.driver.get(list_url)
 
-            # ── 等待主课程表格加载（防元素未渲染 + 白页卡死）──
-            try:
-                WebDriverWait(self.driver, 10).until(
-                    EC.presence_of_element_located(
-                        (By.XPATH, "//table//tbody//tr")
+            # ── DOM 模式才依赖主课程表格；API 模式直接走接口 ──
+            if not self.api_selector:
+                try:
+                    WebDriverWait(self.driver, 10).until(
+                        EC.presence_of_element_located(
+                            (By.XPATH, "//table//tbody//tr")
+                        )
                     )
-                )
-            except TimeoutException:
-                # 检查是否白页（页面加载了但内容没渲染）
-                page_text = self.driver.find_element(By.TAG_NAME, "body").text.strip()
-                if len(page_text) < 20:
-                    print("    检测到白页（页面无内容），强制重新导航...")
-                    self.driver.get(list_url)
-                    time.sleep(3)
-                else:
-                    print("    警告: 主课程表格未加载，继续尝试...")
-                continue
+                except TimeoutException:
+                    # 检查是否白页（页面加载了但内容没渲染）
+                    page_text = self.driver.find_element(By.TAG_NAME, "body").text.strip()
+                    if len(page_text) < 20:
+                        print("    检测到白页（页面无内容），强制重新导航...")
+                        self.driver.get(list_url)
+                        time.sleep(3)
+                    else:
+                        print("    警告: 主课程表格未加载，继续尝试...")
+                    continue
             time.sleep(self.runtime.DELAY_TIME if self.runtime else 0.8)
 
             temp_courses_to_check = []
@@ -859,7 +768,9 @@ class GetCourse:
                 temp_courses_to_check.append((courseName, select_result))
 
             for course_name, was_selected in temp_courses_to_check:
-                if was_selected and self.isSelected(course_name):
+                if was_selected and self.api_selector:
+                    print(f"课程 {course_name} API 已提交，信任接口结果。")
+                elif was_selected and self.isSelected(course_name):
                     print(f"课程 {course_name} 已确认选上。")
                 elif was_selected and not self.isSelected(course_name):
                     print(f"课程 {course_name} 选择操作成功但未在已选列表中确认，重新加入队列。")
@@ -885,6 +796,9 @@ class GetCourse:
                     print("refresh 也失败了，等待后重试...")
                     time.sleep(3)
             time.sleep(self.runtime.DELAY_TIME if self.runtime else 0.8)
+
+        print(f"已达到最大轮询轮次 {self.CIRCLE_MAX_ROUNDS}，停止本轮任务。")
+        return False
 
     def _login_and_wait(self, label="", is_primary=True):
         """登录 + 等待时间 → 直达 CourseStuSelectionList。
@@ -946,12 +860,17 @@ class GetCourse:
                 print(f"[{label}]    请在浏览器中手动登录（只需一次）。")
 
             print(f"[{label}] 2. 等待登录成功: {self.dashboard_url}")
-            while True:
+            login_deadline = time.time() + self.LOGIN_TIMEOUT
+            while time.time() < login_deadline:
                 current_url = self.driver.current_url
                 if current_url.startswith(self.dashboard_url):
                     print(f"[{label}]    登录成功！")
                     break
                 time.sleep(self.LOGIN_POLL_INTERVAL)
+            else:
+                raise TimeoutException(
+                    f"[{label}] 登录等待超过 {self.LOGIN_TIMEOUT} 秒，请检查账号密码或手动登录状态。"
+                )
 
             # 通知其他线程：登录完成
             if self.runtime:
@@ -962,7 +881,10 @@ class GetCourse:
             # ── 副线程：等待主线程登录完成 ──
             print(f"[{label}] 等待主 Tab 登录...")
             if self.runtime:
-                self.runtime._login_done.wait()  # 阻塞直到主线程 set()
+                if not self.runtime._login_done.wait(self.SECONDARY_LOGIN_TIMEOUT):
+                    raise TimeoutException(
+                        f"[{label}] 等待主 Tab 登录超过 {self.SECONDARY_LOGIN_TIMEOUT} 秒。"
+                    )
             print(f"[{label}] 主 Tab 已登录，直接进入选课列表。")
 
         # ── 直达 CourseStuSelectionList ──
@@ -1020,6 +942,18 @@ class GetCourse:
             courseName = courseQueue.get()
             print(f"[激进] ★ 聚焦: {courseName}")
 
+            if self.api_selector:
+                for attempt in range(1, self.AGGRESSIVE_MAX_RETRIES + 1):
+                    if self.select(courseName):
+                        print(f"[激进] ✓ {courseName} API 已提交")
+                        break
+                    if attempt % 50 == 0:
+                        print(f"[激进]   {courseName} API 已重试 {attempt} 次...")
+                    time.sleep(self.AGGRESSIVE_GAP)
+                else:
+                    print(f"[激进]   {courseName} API 达到 {self.AGGRESSIVE_MAX_RETRIES} 次上限，跳过。")
+                continue
+
             # 激活激进窗口（防止后台 Tab 不渲染）
             try:
                 self.driver.switch_to.window(agg_handle)
@@ -1050,28 +984,27 @@ class GetCourse:
 
                     fail_count += 1
                     if fail_count >= self.AGGRESSIVE_MAX_RETRIES:
-                        print(f"[激进]   {courseName} 已达 {self.AGGRESSIVE_MAX_RETRIES} 次上限，刷新...")
-                        self.driver.refresh()
-                        time.sleep(self.AGGRESSIVE_REFRESH_GAP)
-                        fail_count = 0
+                        print(f"[激进]   {courseName} 已达 {self.AGGRESSIVE_MAX_RETRIES} 次上限，跳过。")
+                        break
                     elif fail_count % 50 == 0:
                         print(f"[激进]   {courseName} 已重试 {fail_count} 次...")
                     time.sleep(self.AGGRESSIVE_GAP)
 
                 except TimeoutException:
                     # 元素消失 → 刷新
+                    fail_count += 1
+                    if fail_count >= self.AGGRESSIVE_MAX_RETRIES:
+                        print(f"[激进]   {courseName} 元素等待超限，跳过。")
+                        break
                     print(f"[激进]   元素消失，刷新...")
                     self.driver.refresh()
                     time.sleep(self.AGGRESSIVE_REFRESH_GAP)
-                    fail_count = 0
 
                 except Exception as e:
                     fail_count += 1
                     if fail_count >= self.AGGRESSIVE_MAX_RETRIES:
-                        print(f"[激进]   异常超限，刷新...")
-                        self.driver.refresh()
-                        time.sleep(self.AGGRESSIVE_REFRESH_GAP)
-                        fail_count = 0
+                        print(f"[激进]   异常超限，跳过。")
+                        break
                     elif fail_count % 30 == 0:
                         print(f"[激进]   异常({fail_count}次): {e}")
                     time.sleep(self.AGGRESSIVE_GAP)
@@ -1204,14 +1137,14 @@ class APISelector:
     POST_COOLDOWN = 1.0
     POST_BACKOFF_MAX = 5.0
 
-    def __init__(self, driver, api_proxy=None):
+    def __init__(self, driver):
         self.driver = driver
         self._last_post_time = 0
         self._cached_token = None
         self._post_lock = __import__('threading').Lock()
-        self._proxy = api_proxy
         self._tag = ""
         self._course_list_cache = None  # 课程列表缓存（同 session 不变）
+        self._last_error = ""
 
     def set_tag(self, tag):
         """从 GetCourse 同步账号标签。"""
@@ -1261,42 +1194,49 @@ class APISelector:
         """通过浏览器 JS fetch 发送 API 请求。
 
         返回: (data, raw_response_dict) — 成功时 data 为解析后的数据，
-              失败时 data=None, raw_response_dict 包含完整响应用于诊断。
+        失败时 data=None, raw_response_dict 包含完整响应用于诊断。
         """
         url = f"{GetCourse.API_BASE}{GetCourse.API_PREFIX}{path}"
-        body_js = f", body: '{body}'" if body else ""
+        self._last_error = ""
         self._log(f"→ {method} {url.split('?')[0]}")
 
         for attempt in range(4):
             if attempt > 0:
                 time.sleep(1.0 * attempt)
 
-            js = f"""
+            js = """
+        var url = arguments[0];
+        var method = arguments[1];
+        var body = arguments[2];
         var done = arguments[arguments.length - 1];
         var token = localStorage.getItem('cqu_edu_ACCESS_TOKEN') || 
                     localStorage.getItem('cqu_edu_CURRENT_TOKEN') || '';
-        if (token) {{ try {{ token = JSON.parse(token); }} catch(e) {{}} }}
-        var headers = {{ 'Accept': 'application/json', 'Content-Type': 'application/json' }};
+        if (token) { try { token = JSON.parse(token); } catch(e) {} }
+        var headers = { 'Accept': 'application/json', 'Content-Type': 'application/json' };
         if (token) headers['Authorization'] = 'Bearer ' + token;
-        fetch('{url}', {{
-            method: '{method}',
+        var options = {
+            method: method,
             credentials: 'include',
-            headers: headers{body_js}
-        }}).then(function(r) {{
-            return r.text().then(function(txt) {{
-                try {{
+            headers: headers
+        };
+        if (body !== null && body !== undefined && body !== '') {
+            options.body = body;
+        }
+        fetch(url, options).then(function(r) {
+            return r.text().then(function(txt) {
+                try {
                     var data = JSON.parse(txt);
-                    done(JSON.stringify({{ok: true, status: r.status, data: data}}));
-                }} catch(e) {{
-                    done(JSON.stringify({{ok: false, status: r.status, error: 'JSON parse: ' + e.message, body: txt.slice(0,500)}}));
-                }}
-            }});
-        }}).catch(function(err) {{
-            done(JSON.stringify({{ok: false, error: err.message || String(err)}}));
-        }});
+                    done(JSON.stringify({ok: true, status: r.status, data: data}));
+                } catch(e) {
+                    done(JSON.stringify({ok: false, status: r.status, error: 'JSON parse: ' + e.message, body: txt.slice(0,500)}));
+                }
+            });
+        }).catch(function(err) {
+            done(JSON.stringify({ok: false, error: err.message || String(err)}));
+        });
         """
             try:
-                raw = self.driver.execute_async_script(js)
+                raw = self.driver.execute_async_script(js, url, method, body)
                 result = json.loads(raw)
                 if result.get("ok"):
                     data = result.get("data")
@@ -1309,6 +1249,7 @@ class APISelector:
                                     self._log(f"限速({msg})，自动重试...")
                                 continue
                             self._log(f"→ 服务器: msg='{msg}'")
+                            self._last_error = msg or "服务器返回错误"
                             return None
                         return data  # 正常
                     msg = data.get("msg", "") if isinstance(data, dict) else ""
@@ -1317,15 +1258,19 @@ class APISelector:
                             self._log(f"限速({msg})，自动重试...")
                         continue  # 重试
                     self._log(f"→ 服务器: msg='{msg}'")
+                    self._last_error = msg or "服务器响应为空"
                     return None
                 else:
                     self._log(f"fetch 失败: {json.dumps(result, ensure_ascii=False)[:200]}")
+                    self._last_error = result.get("error") or f"fetch 失败(status={result.get('status')})"
                     return None
             except Exception as e:
                 self._log(f"异常: {e}")
+                self._last_error = str(e)
                 return None
 
         self._log(f"→ 已达最大重试(4次)")
+        self._last_error = "请求过于频繁，已达最大重试"
         return None
 
     # ── API 端点 ──
@@ -1408,7 +1353,7 @@ class APISelector:
             )
 
             if data is None:
-                return False, "网络错误"
+                return False, self._last_error or "网络错误"
 
             msg = data.get("msg", data.get("message", ""))
             if data.get("ok") is True or data.get("status") == "success":
@@ -1501,8 +1446,10 @@ class APISelector:
             labels = cls.get("classTagNameList") or []
             instructor = cls.get("instructorNames", "")
             class_nbr = cls.get("classNbr", "")
-            selected_num = cls.get("selectedNum", 0)
-            capacity = cls.get("stuCapacity", 999)
+            selected_num_raw = cls.get("selectedNum", 0)
+            capacity_raw = cls.get("stuCapacity", 999)
+            selected_num = _to_int(selected_num_raw, 0)
+            capacity = _to_int(capacity_raw, 999)
             class_id = cls.get("id", "")
 
             # 过滤不可选条件
@@ -1581,15 +1528,15 @@ def run_account(runtime):
     api_agg = None
     if api_mode:
         print(f"[{name}] === API 直连模式（双 Tab 均用 API）===")
-        api_poll = APISelector(drivers[0], api_proxy=rt.api_proxy)
+        api_poll = APISelector(drivers[0])
         if dual_mode and len(drivers) >= 2:
-            api_agg = APISelector(drivers[1], api_proxy=rt.api_proxy)
+            api_agg = APISelector(drivers[1])
     elif rt.mixed_mode:
         # 混合模式：单窗口，API 20s ↔ DOM 20s 交替
         print(f"[{name}] === 混合模式（API ↔ DOM 交替）===")
         inst = GetCourse(courseList, drivers[0],
                          fuzzy_match=rt.FUZZY_MATCH,
-                         api_selector=APISelector(drivers[0], api_proxy=rt.api_proxy),
+                         api_selector=APISelector(drivers[0]),
                          runtime=rt)
         t = Thread(target=inst.run_mixed, name=f"{name}-Mixed")
         t.start()
@@ -1649,13 +1596,6 @@ if __name__ == '__main__':
         print(f"  - {a['name']} ({a['username']}) "
               f"{len(a['courses'])}门 | {win_desc} | {mode_desc}")
 
-    # ── 代理池预筛选 ──
-    raw_proxies = global_cfg.get("proxies", [])
-    alive_proxies = _filter_alive_proxies(raw_proxies, max_test=20, timeout=3)
-    global_cfg["proxies"] = alive_proxies  # 替换为可用代理
-    if raw_proxies and not alive_proxies:
-        print("⚠ 警告: 所有代理均不可用，将使用直连。")
-
     # ── 创建每个账号的运行时环境 ──
     runtimes = []
     for acct_cfg in accounts:
@@ -1689,13 +1629,13 @@ if __name__ == '__main__':
         for t in account_threads:
             t.join()
     except KeyboardInterrupt:
-        print("\n用户中断。正在关闭所有浏览器...")
+        print("\n用户中断。正在断开 WebDriver 连接，浏览器窗口会保留...")
 
     # ── 清理（断开 driver 连接，但保持浏览器窗口）──
     for rt in runtimes:
         for d in rt.drivers:
             try:
-                d.close()  # 只关当前 Tab
+                d.service.stop()
             except Exception:
                 pass
     print("选课结束，浏览器窗口已保留。")

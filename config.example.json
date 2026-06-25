@@ -9,9 +9,6 @@
         "fuzzy_match": true
     },
 
-    "_proxy_note": "代理池（可选，仅 API 请求使用，不影响浏览器）。留空则直连。http/https/socks5/socks4。运行 python fetch_proxies.py --update 刷新。",
-    "proxies": [],
-
     "accounts": [
         {
             "name": "张三",
