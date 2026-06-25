@@ -864,17 +864,19 @@ class APISelector:
     # ── API 端点 ──
 
     def get_course_list(self, selection_source="主修"):
-        """获取课程列表，返回扁平化数组 [{id, name, codeR, ...}]。"""
+        """获取课程列表，返回扁平化数组 [{id, name, codeR(→str), ...}]。"""
         from urllib.parse import quote
         url = f"/api/enrollment/enrollment/course-list?selectionSource={quote(selection_source)}"
         resp = self._browser_fetch(url, "GET")
         if not resp:
             return []
-        # API 格式: {status:"success", data: [{courseVOList: [...], ...}]}
         data_list = resp.get("data", [])
         courses = []
         for area in data_list:
             for c in area.get("courseVOList", []):
+                # codeR 可能是整数，统一转字符串
+                if "codeR" in c:
+                    c["codeR"] = str(c["codeR"])
                 courses.append(c)
         return courses
 
@@ -966,7 +968,7 @@ class APISelector:
 
         for c in course_list:
             c_name = c.get("name", "")
-            c_code = c.get("codeR", "")
+            c_code = str(c.get("codeR", ""))
             name_ok = (fuzzy_course and course_name in c_name) or (not fuzzy_course and c_name == course_name)
             code_ok = (not target_code) or (target_code in c_code)
             if name_ok and code_ok:
