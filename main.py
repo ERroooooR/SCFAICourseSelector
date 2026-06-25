@@ -709,9 +709,18 @@ class GetCourse:
                 print("所有课程均已处理并确认（或已无余课）。")
                 return True
 
+            # 本轮结束：重进列表页（确保 driver 状态正常）
             print(f"本轮结束，{len(temp_courses_to_check)} 门课程中仍有 {courseQueue.qsize()} 门待选。")
-            print("刷新页面后继续下一轮...")
-            self.driver.refresh()
+            print("重新进入列表页...")
+            try:
+                self.driver.get(list_url)
+            except Exception as e:
+                print(f"重新进入列表页失败 ({e})，尝试 refresh...")
+                try:
+                    self.driver.refresh()
+                except Exception:
+                    print("refresh 也失败了，等待后重试...")
+                    time.sleep(3)
             time.sleep(self.runtime.DELAY_TIME if self.runtime else 0.8)
 
     def _login_and_wait(self, label="", is_primary=True):
