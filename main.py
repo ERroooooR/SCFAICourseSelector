@@ -1269,12 +1269,6 @@ class APISelector:
 
         for attempt in range(4):
             if attempt > 0:
-                time.sleep(1.0 * attempt)  # 退避: 1s, 2s, 3s
-
-        self._log(f"→ {method} {url}")
-
-        for attempt in range(4):
-            if attempt > 0:
                 time.sleep(1.0 * attempt)
 
             js = f"""
