@@ -1049,7 +1049,7 @@ class GetCourse:
         while pending:
             # ── Phase 1: API ──
             if api:
-                print(f"[混合] ── API 阶段 ── 待选: {pending}")
+                print(f"[混合] ── API {PHASE_SECONDS}s ── 待选: {pending}")
                 api_deadline = time.time() + PHASE_SECONDS
                 api_hit = 0
                 while time.time() < api_deadline and pending:
@@ -1063,17 +1063,23 @@ class GetCourse:
                             pending.discard(course)
                             api_hit += 1
                         time.sleep(0.1)
-                print(f"[混合] API 阶段: +{api_hit} 门，待选: {pending}")
-                if not pending:
-                    break
+                print(f"[混合] API: +{api_hit}，待选: {pending}")
 
-            # ── Phase 2: DOM ──
-            print(f"[混合] ── DOM 阶段 ── 待选: {pending}")
+            # ── Phase 2: DOM ──  （API 清零也至少跑一轮）
             dom_deadline = time.time() + PHASE_SECONDS
             dom_hit = 0
             dom_errors = 0
-            while time.time() < dom_deadline and pending:
-                for course in list(pending):
+            dom_pending = pending.copy() if pending else set(courses)  # API 清零则全量验证
+            if not pending:
+                print(f"[混合] ── DOM {PHASE_SECONDS}s ── API 已清零，DOM 全量验证...")
+            else:
+                print(f"[混合] ── DOM {PHASE_SECONDS}s ── 待选: {pending}")
+
+            while time.time() < dom_deadline:
+                targets = list(dom_pending) if dom_pending else list(pending)
+                if not targets:
+                    break
+                for course in targets:
                     if time.time() >= dom_deadline:
                         break
                     try:
@@ -1091,7 +1097,10 @@ class GetCourse:
                         if dom_errors == 1:
                             print(f"[混合] DOM 异常: {e}")
                     time.sleep(0.3)
-            print(f"[混合] DOM 阶段: +{dom_hit} 门 (异常{dom_errors}次)，待选: {pending}")
+            print(f"[混合] DOM: +{dom_hit} (异常{dom_errors})，待选: {pending}")
+
+            if not pending:
+                break
 
         print("[混合] 全部完成！")
 
