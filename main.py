@@ -1023,6 +1023,71 @@ class GetCourse:
 
         print("[激进] 所有课程已处理。")
 
+    def run_mixed(self):
+        """ [混合模式] API 直连 20s → DOM 点击 20s → 交替，直到全选上。
+
+        单 Tab 顺序执行，避免 API/DOM 同时操作同一账号造成并发冲突。
+        """
+        self._login_and_wait("混合", is_primary=True)
+        list_url = self.list_url
+
+        # 初始化 API
+        api = self.api_selector
+        if api:
+            api._get_token()
+
+        courses = list(self.courseList.keys())
+        pending = set(courses)
+
+        PHASE_SECONDS = 20
+
+        print(f"[混合] 开始交替（API↔DOM 各 {PHASE_SECONDS}s）...")
+
+        while pending:
+            # ── Phase 1: API ──
+            print(f"[混合] ── API 阶段 ── 待选: {pending}")
+            api_deadline = time.time() + PHASE_SECONDS
+            api_hit = 0
+            while time.time() < api_deadline and pending:
+                for course in list(pending):
+                    if time.time() >= api_deadline:
+                        break
+                    target = self.courseList[course]
+                    success, msg = api.find_and_select(course, target)
+                    if success:
+                        print(f"[混合] ✓ API: {course}")
+                        pending.discard(course)
+                        api_hit += 1
+                    time.sleep(0.1)
+            print(f"[混合] API 阶段: +{api_hit} 门，待选: {pending}")
+            if not pending:
+                break
+
+            # ── Phase 2: DOM ──
+            print(f"[混合] ── DOM 阶段 ── 待选: {pending}")
+            dom_deadline = time.time() + PHASE_SECONDS
+            dom_hit = 0
+            while time.time() < dom_deadline and pending:
+                for course in list(pending):
+                    if time.time() >= dom_deadline:
+                        break
+                    try:
+                        if self.driver.current_url != list_url:
+                            self.driver.get(list_url)
+                            time.sleep(self.runtime.DELAY_TIME if self.runtime else 0.8)
+
+                        if self.select(course):
+                            if self.isSelected(course):
+                                print(f"[混合] ✓ DOM: {course}")
+                                pending.discard(course)
+                                dom_hit += 1
+                    except Exception:
+                        pass
+                    time.sleep(0.3)
+            print(f"[混合] DOM 阶段: +{dom_hit} 门，待选: {pending}")
+
+        print("[混合] 全部完成！")
+
 
 # ============================================================
 # API 直连选课 — 绕过 DOM，直接 JSON 解析 + HTTP POST
@@ -1358,9 +1423,16 @@ def run_account(runtime):
         if dual_mode and len(drivers) >= 2:
             api_agg = APISelector(drivers[1], api_proxy=rt.api_proxy)
     elif rt.mixed_mode:
-        print(f"[{name}] === 混合模式（轮询=DOM, 激进=API）===")
-        if dual_mode and len(drivers) >= 2:
-            api_agg = APISelector(drivers[1], api_proxy=rt.api_proxy)
+        # 混合模式：单窗口，API 20s ↔ DOM 20s 交替
+        print(f"[{name}] === 混合模式（API ↔ DOM 交替）===")
+        inst = GetCourse(courseList, drivers[0],
+                         fuzzy_match=rt.FUZZY_MATCH,
+                         api_selector=APISelector(drivers[0], api_proxy=rt.api_proxy),
+                         runtime=rt)
+        t = Thread(target=inst.run_mixed, name=f"{name}-Mixed")
+        t.start()
+        t.join()
+        return
 
     # 每个窗口独立队列
     courses = list(courseList.keys())
@@ -1410,10 +1482,10 @@ if __name__ == '__main__':
 
     print(f"=== 加载 {len(accounts)} 个账号 ===")
     for a in accounts:
-        print(f"  - {a['name']} (学号: {a['username']}) "
-              f"选课 {len(a['courses'])} 门 | "
-              f"{'双窗口' if a['dual_mode'] else '单窗口'} | "
-              f"{'API' if a['api_mode'] else ('混合' if a['mixed_mode'] else 'DOM')}")
+        mode_desc = "API" if a['api_mode'] else ("混合" if a['mixed_mode'] else "DOM")
+        win_desc = "单窗口" if a['mixed_mode'] else ("双窗口" if a['dual_mode'] else "单窗口")
+        print(f"  - {a['name']} ({a['username']}) "
+              f"{len(a['courses'])}门 | {win_desc} | {mode_desc}")
 
     # ── 代理池预筛选 ──
     raw_proxies = global_cfg.get("proxies", [])
@@ -1427,6 +1499,9 @@ if __name__ == '__main__':
     for acct_cfg in accounts:
         rt = AccountRuntime(acct_cfg, global_cfg)
         runtimes.append(rt)
+        # 混合模式只需 1 窗口
+        if rt.mixed_mode:
+            rt.dual_mode = False
         try:
             rt.create_drivers()
         except Exception as e:
