@@ -510,29 +510,23 @@ class GetCourse:
             print(*args)
 
     def _course_title_xpath(self, name, course_code=""):
-        """生成课程标题列 XPath。兼容 <a> 和 <generic>/<span> 等渲染方式。
+        """生成课程标题列 XPath。目标：<a> 标签（点击打开 Drawer）。
 
         当提供 course_code 时，同时匹配第 2 列课程代码过滤同名课程。
         """
         safe = name.replace('"', '').replace("'", '')
 
-        # 点击目标：包含课程名的可点击元素（a / span / generic 等），限表格内
-        clickable = (
-            f"//td//*[contains(@title,'{safe}') or contains(text(),'{safe}')]"
-        )
-
         if course_code:
             safe_code = course_code.replace('"', '').replace("'", '')
-            # 行级定位：课程名（任意元素） + 第 2 列课程代码
             return (
-                f"//tr[td//*[contains(@title,'{safe}') or contains(text(),'{safe}')]"
-                f" and td[2][contains(.,'{safe_code}')]]"
-                f"//*[contains(@title,'{safe}') or contains(text(),'{safe}')]"
+                f'//tr[td//a[contains(@title, "{safe}")]'
+                f' and td[2][contains(., "{safe_code}")]]'
+                f'//a[contains(@title, "{safe}")]'
             )
         elif self.fuzzy_match:
-            return f"//*[contains(@title,'{safe}') or contains(text(),'{safe}')]"
+            return f'//a[contains(@title, "{safe}")]'
         else:
-            return f"//*[@title='{safe}' or text()='{safe}']"
+            return f'//a[@title="{safe}"]'
 
     def wait(self, retries=1, *element):
         """ 显式等待 - 单元素 """
@@ -592,23 +586,19 @@ class GetCourse:
             else:
                 raise
         course_link.click()
-        # JS fallback: 非 <a> 元素可能 click() 无效
-        try:
-            self.driver.execute_script("arguments[0].click();", course_link)
-        except Exception:
-            pass
         print(f"已点击课程: {name}" + (f" ({course_code})" if course_code else ""))
 
-        # 等待 Modal 渲染
+        # 等待 Drawer 渲染（.ant-drawer-body 内的 .select-class-info-modal）
         try:
             WebDriverWait(self.driver, 5).until(
                 EC.presence_of_element_located(
-                    (By.XPATH, "//div[contains(@class,'select-class-info-modal')]")
+                    (By.XPATH, "//div[contains(@class,'ant-drawer-body')]"
+                               "//div[contains(@class,'select-class-info-modal')]")
                 )
             )
-            time.sleep(self.MODAL_RENDER_GAP)  # 给 Modal 内部表格一点渲染时间
+            time.sleep(self.MODAL_RENDER_GAP)
         except TimeoutException:
-            print(f"  Modal 未弹出，可能是课程已选或页面未响应。")
+            print(f"  Drawer 未弹出，可能是课程已选或页面未响应。")
             self.close()
             return False
 
@@ -616,10 +606,10 @@ class GetCourse:
         target_cid  = (target.get("class_id", "") or "").strip()
         target_teacher = (target.get("teacher", "") or "").strip()
 
-        # 2. 等待 Modal 中的教学班表格出现（重试机制，应对 AJAX 延迟）
+        # 2. 等待 Drawer 中的教学班表格出现（重试机制，应对 AJAX 延迟）
         row_xpath = (
-            "//div[contains(@class,'select-class-info-modal')]"
-            "//tbody[@class='ant-table-tbody']/tr"
+            "//div[contains(@class,'ant-drawer-body')]"
+            "//table//tbody/tr"
         )
         rows = []
         for retry in range(3):
@@ -675,16 +665,16 @@ class GetCourse:
                 print(f"    班 {idx+1}: 跳过（匹配但{status_text}） {match_info}")
                 continue
 
-            # Ant Design 表格：checkbox 在最后一列，可能是隐藏 input 或 span.ant-checkbox
-            checkboxes = cells[8].find_elements(By.XPATH, ".//input[@type='checkbox']")
+            # Ant Design Drawer：checkbox 在最后一列，结构为 LABEL.ant-checkbox-wrapper > SPAN.ant-checkbox > INPUT.ant-checkbox-input
+            # 必须点击 LABEL 才能触发 React onChange
             cb_element = None
-            if checkboxes:
-                cb_element = checkboxes[0]
+            wrappers = cells[8].find_elements(By.XPATH, ".//label[contains(@class,'ant-checkbox-wrapper')]")
+            if wrappers:
+                cb_element = wrappers[0]
             if not cb_element:
-                # 回退：查找 ant-checkbox 容器（Ant Design 真实点击目标）
-                ant_cbs = cells[8].find_elements(By.XPATH, ".//*[contains(@class,'ant-checkbox')]")
-                if ant_cbs:
-                    cb_element = ant_cbs[0]
+                checkboxes = cells[8].find_elements(By.XPATH, ".//input[@type='checkbox']")
+                if checkboxes:
+                    cb_element = checkboxes[0]
             if not cb_element:
                 print(f"    班 {idx+1}: 跳过（匹配但无选择框） {match_info}")
                 continue
@@ -703,21 +693,10 @@ class GetCourse:
             reason = " + ".join(reason_parts)
             print(f"    班 {idx+1}: ✓ {reason} → {match_info} 容量={capacity_text}")
             try:
-                # 点击复选框：ant-checkbox span 用 Selenium click（触发 React），
-                # 隐藏 input 用 JS（直接改 checked 属性）
-                tag = cb_element.tag_name.lower()
-                if tag == 'input':
-                    self.driver.execute_script(
-                        "arguments[0].checked = true;"
-                        "arguments[0].dispatchEvent(new Event('change', {bubbles: true}));"
-                        "arguments[0].dispatchEvent(new MouseEvent('click', {bubbles: true}));",
-                        cb_element
-                    )
-                else:
-                    # ant-checkbox span/label — 原生 click 触发 React onChange
-                    self.driver.execute_script(
-                        "arguments[0].scrollIntoView({block:'center'});", cb_element)
-                    cb_element.click()
+                # 点击复选框 LABEL（或 input），触发 React onChange
+                self.driver.execute_script(
+                    "arguments[0].scrollIntoView({block:'center'});", cb_element)
+                cb_element.click()
                 print("    已勾选复选框。")
 
                 # 初步确认（选课时间开启后才有此按钮）
