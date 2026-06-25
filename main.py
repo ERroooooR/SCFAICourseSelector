@@ -1387,7 +1387,7 @@ class APISelector:
 
         for attempt in range(1, 4):
             data = self._api_request(
-                "/api/enrollment/enrollment/student/select", "POST",
+                "/student/select", "POST",
                 json.dumps({
                     "courses": [{
                         "courseName": course_data.get("name", ""),
