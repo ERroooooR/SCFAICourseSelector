@@ -548,17 +548,15 @@ class GetCourse:
         except Exception:
             pass
 
-    def select(self, name):
-        """ 执行选课操作 — API 模式下走 JSON 解析，否则走 DOM 点击。
+    def select(self, name, force_dom=False):
+        """ 执行选课 — API 模式下走 JSON，否则走 DOM 点击。
 
-        两层独立匹配：
-        1. 课程名（name）→ 主列表定位课程（受 fuzzy_match 控制）
-        2. label/class_id/teacher → Modal 内筛选教学班（各自模糊匹配，OR 关系）
+        force_dom=True: 即使 api_selector 存在也强制 DOM 模式。
         """
         target = self.courseList.get(name, {"label": "", "class_id": "", "teacher": ""})
 
         # ── API 模式：跳过 DOM，直接 JSON 选课 ──
-        if self.api_selector:
+        if self.api_selector and not force_dom:
             success, msg = self.api_selector.find_and_select(
                 name, target, fuzzy_course=self.fuzzy_match
             )
