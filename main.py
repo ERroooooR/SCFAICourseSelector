@@ -620,14 +620,18 @@ class GetCourse:
                     confirm_1.click()
                     print("    已点击初步选课确认。")
                 except NoSuchElementException:
-                    print("    未找到「选」按钮（可能非选课时间或该课型无需初步确认）。")
+                    print("    未找到「选」按钮（非选课时间或无此步骤）。")
 
                 # 最终确认
-                confirm_2 = self.driver.find_element(By.XPATH,
-                    "//div[@class='ant-modal-confirm-btns']"
-                    "//button[.//span[contains(text(),'确')]]")
-                confirm_2.click()
-                print("    已点击最终确认。")
+                try:
+                    confirm_2 = self.driver.find_element(By.XPATH,
+                        "//div[@class='ant-modal-confirm-btns']"
+                        "//button[.//span[contains(text(),'确')]]")
+                    confirm_2.click()
+                    print("    已点击最终确认。")
+                except NoSuchElementException:
+                    # 某些课型 checkbox 即提交，或非选课时间不弹确认框
+                    print("    未找到「确」按钮（非选课时间或 checkbox 即提交）。")
 
                 self.close()
                 return True
@@ -636,8 +640,8 @@ class GetCourse:
                 print(f"    班 {idx+1}: 点击失败 → {e}")
                 continue
 
-        # 所有行遍历完都没匹配
-        print(f"  课程 {name}: 无可用教学班（label='{target_label}' class_id='{target_cid}' teacher='{target_teacher}'）。")
+        # 所有行遍历完都没成功
+        print(f"  课程 {name}: 所有班均已跳过或无匹配目标（label='{target_label}' class_id='{target_cid}' teacher='{target_teacher}'）。")
         self.close()
         return False
 
