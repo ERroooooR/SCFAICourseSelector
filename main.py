@@ -498,8 +498,16 @@ class GetCourse:
         self.courseList = courseList
         self.fuzzy_match = fuzzy_match
         self.api_selector = api_selector
-        self.runtime = runtime  # AccountRuntime 实例
+        self.runtime = runtime
+        self._tag = f"[{runtime.name}]" if runtime else ""
         self.web_wait = WebDriverWait(self.driver, 4)
+
+    def _log(self, *args):
+        """带账号前缀的 print。"""
+        if self._tag:
+            print(self._tag, *args)
+        else:
+            print(*args)
 
     def _course_title_xpath(self, name, course_code=""):
         """根据模糊/精确模式生成课程标题 XPath。引号自动转义。
@@ -561,10 +569,10 @@ class GetCourse:
                 name, target, fuzzy_course=self.fuzzy_match
             )
             if success:
-                print(f"[API] ✓ {name}: {msg}")
+                self._log(f"✓ {name}: {msg}")
                 return True
             else:
-                print(f"[API]   {name}: {msg}")
+                self._log(f"  {name}: {msg}")
                 return False
 
         # ── DOM 模式：仅当 api_selector 为 None 时执行 ──
@@ -1048,7 +1056,7 @@ class GetCourse:
         while pending:
             # ── Phase 1: API ──
             if api:
-                print(f"[混合] ── API {PHASE_SECONDS}s ── 待选: {pending}")
+                self._log(f"── API {PHASE_SECONDS}s ── 待选: {pending}")
                 api_deadline = time.time() + PHASE_SECONDS
                 api_hit = 0
                 fail_streak = 0  # 连续"操作失败"计数
@@ -1143,7 +1151,18 @@ class APISelector:
         self._last_post_time = 0
         self._cached_token = None
         self._post_lock = __import__('threading').Lock()
-        self._proxy = api_proxy  # 专属代理 URL 或 None
+        self._proxy = api_proxy
+        self._tag = ""  # 由 GetCourse 设置
+
+    def set_tag(self, tag):
+        """从 GetCourse 同步账号标签。"""
+        self._tag = tag
+
+    def _log(self, *args):
+        if self._tag:
+            print(self._tag, *args)
+        else:
+            print(*args)
 
     # ── Token ──
 
@@ -1157,9 +1176,9 @@ class APISelector:
         )
         if token:
             token_hash = __import__('hashlib').md5(token.encode()).hexdigest()[:8]
-            print(f"[API] Token 获取成功: {token[:20]}... (hash={token_hash})")
+            self._log(f"Token 获取成功: {token[:20]}... (hash={token_hash})")
             return token
-        print("[API] Token 未找到，请确认已登录。")
+        self._log("Token 未找到，请确认已登录。")
         return None
 
     def _api_request(self, path, method="GET", body=None):
@@ -1207,12 +1226,12 @@ class APISelector:
             except Exception as e:
                 err_msg = str(e)[:80]
                 if proxy_url:
-                    print(f"[API] 代理 {proxy_url} 失败({attempt+1}/5): {err_msg}")
+                    self._log(f"代理 {proxy_url} 失败({attempt+1}/5): {err_msg}")
                     if attempt >= 2:
-                        print(f"[API] 代理连续失败，降级直连...")
-                        proxy_url = None  # 后续尝试直连
+                        self._log("代理连续失败，降级直连...")
+                        proxy_url = None
                 elif attempt == 0:
-                    print(f"[API] 直连失败: {err_msg}")
+                    self._log(f"直连失败: {err_msg}")
                 if not proxy_url and attempt >= 2:
                     break
 
@@ -1283,7 +1302,7 @@ class APISelector:
 
             if self.RATE_LIMIT_MSG in msg:
                 wait = min(self.POST_COOLDOWN * (2 ** attempt), self.POST_BACKOFF_MAX)
-                print(f"[API]   限速退避: 等待 {wait:.1f}s 后重试 ({attempt}/3)")
+                self._log(f"限速退避: 等待 {wait:.1f}s 后重试 ({attempt}/3)")
                 time.sleep(wait)
                 continue
 
@@ -1336,31 +1355,25 @@ class APISelector:
             return False, f"{reason} 不在列表中"
         if len(candidates) > 1:
             names = [f"{c['name']}({c.get('codeR','?')})" for c in candidates]
-            print(f"[API] ⚠ 课程 '{course_name}' 命中多项: {names}")
-            # 优先级: 精确名+精确码 > 精确码 > 精确名 > 首个
-            exact = next((c for c in candidates
-                         if c["name"] == course_name and c.get("codeR") == target_code), None)
-            if not exact and target_code:
-                exact = next((c for c in candidates if c.get("codeR") == target_code), None)
-            if not exact and not target_code:
-                exact = next((c for c in candidates if c["name"] == course_name), None)
+            self._log(f"⚠ 课程 '{course_name}' 命中多项: {names}")
+            # ...existing code...
             if exact:
                 candidates = [exact]
-                print(f"[API]   → 选定: {exact['name']}({exact.get('codeR','?')})")
+                self._log(f"  → 选定: {exact['name']}({exact.get('codeR','?')})")
 
         c = candidates[0]
         course_id = c["id"]
         course_code = c.get("codeR", c.get("code", ""))
         course_name_full = c["name"]
 
-        print(f"[API] 找到课程: {course_name_full} (id={course_id}, code={course_code})")
+        self._log(f"找到课程: {course_name_full} (id={course_id}, code={course_code})")
 
         # 2. 获取教学班详情
         classes = self.get_course_details(course_id, selection_source)
         if not classes:
             return False, "无法获取教学班详情（可能是非选课时间）"
 
-        print(f"[API] 找到 {len(classes)} 个教学班")
+        self._log(f"找到 {len(classes)} 个教学班")
 
         # 3. 过滤 + 匹配
         matched_log = []
