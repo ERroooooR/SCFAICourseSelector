@@ -506,20 +506,19 @@ class GetCourse:
         当提供 course_code 时，同时匹配课程代码列，用于区分同名不同码的课程。
         """
         safe = name.replace('"', '').replace("'", '')
-        if self.fuzzy_match:
-            base = f'//a[contains(@title, "{safe}")]'
-        else:
-            base = f'//a[@title="{safe}"]'
+        safe_code = course_code.replace('"', '').replace("'", '') if course_code else ""
 
         if course_code:
-            safe_code = course_code.replace('"', '').replace("'", '')
-            # 匹配同一行同时包含课程名和课程代码
+            # 主表格 row 定位：同时包含课程名和课程代码
             return (
-                f'//tr[td//a[contains(@title, "{safe}")]'
-                f' and contains(td[2]//text(), "{safe_code}")]'
+                f'//table//tr[td//a[contains(@title, "{safe}")]'
+                f' and contains(td[3], "{safe_code}")]'
                 f'//a[contains(@title, "{safe}")]'
             )
-        return base
+        elif self.fuzzy_match:
+            return f'//a[contains(@title, "{safe}")]'
+        else:
+            return f'//a[@title="{safe}"]'
 
     def wait(self, retries=1, *element):
         """ 显式等待 - 单元素 """
