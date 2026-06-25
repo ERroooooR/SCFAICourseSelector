@@ -393,7 +393,7 @@ class GetCourse:
                 print(f"[API]   {name}: {msg}")
                 return False
 
-        # ── DOM 模式（原逻辑）──
+        # ── DOM 模式：仅当 api_selector 为 None 时执行 ──
         # 1. 点击课程链接打开 Modal
         course_code = target.get("course_code", "") or ""
         course_link = self.wait(2, By.XPATH, self._course_title_xpath(name, course_code))
@@ -935,7 +935,6 @@ class APISelector:
 
         return False, "请求过于频繁，已达最大重试"
 
-
     # ── 核心匹配 ──
 
     def find_and_select(self, course_name, target, selection_source="主修",
@@ -1057,6 +1056,8 @@ class APISelector:
                 success, msg = self.submit_selection(
                     course_name_full, course_code, course_id, class_id, selection_source
                 )
+                if not success:
+                    print(f"  [API] 提交失败: {msg} (class_id={class_id})")
                 return success, msg
             else:
                 matched_log.append(
@@ -1085,10 +1086,13 @@ def run(courseList, drivers, dual_mode=True, api_mode=False):
         dual_mode = False
 
     # ── API 模式初始化 ──
-    api = None
+    api_poll = None
+    api_agg = None
     if api_mode:
         print("=== API 直连模式 ===")
-        api = APISelector(drivers[0])
+        api_poll = APISelector(drivers[0])
+        if dual_mode and len(drivers) >= 2:
+            api_agg = APISelector(drivers[1])
 
     # 每个窗口独立队列（避免线程竞争）
     courses = list(courseList.keys())
@@ -1104,7 +1108,7 @@ def run(courseList, drivers, dual_mode=True, api_mode=False):
     # 窗口 1：轮询模式
     instance_poll = GetCourse(courseList, drivers[0],
                               fuzzy_match=Properties.FUZZY_MATCH,
-                              api_selector=api)
+                              api_selector=api_poll)
     instances.append(instance_poll)
     thread_poll = Thread(target=instance_poll.run_poll, args=(queue_poll,), name="Poll")
     threads.append(thread_poll)
@@ -1114,7 +1118,7 @@ def run(courseList, drivers, dual_mode=True, api_mode=False):
         # 窗口 2：激进模式
         instance_agg = GetCourse(courseList, drivers[1],
                                  fuzzy_match=Properties.FUZZY_MATCH,
-                                 api_selector=api)
+                                 api_selector=api_agg)
         instances.append(instance_agg)
         thread_agg = Thread(target=instance_agg.run_aggressive,
                            args=(queue_aggressive,), name="Aggressive")
