@@ -1306,7 +1306,7 @@ class APISelector:
                 result = json.loads(raw)
                 if result.get("ok"):
                     data = result.get("data")
-                    if data and isinstance(data, dict) and isinstance(data.get("data"), list):
+                    if data and isinstance(data, dict):
                         return data  # 正常
                     msg = data.get("msg", "") if isinstance(data, dict) else ""
                     if any(p in msg for p in GetCourse.RATE_LIMIT_PATTERNS):
