@@ -1087,6 +1087,13 @@ class GetCourse:
                 print(f"[混合] API: +{api_hit}，待选: {pending}")
 
             # ── Phase 2: DOM ──  （API 清零也至少跑一轮）
+            # 先刷新页面，确保表格元素已加载（防止没开抢时残留空白页）
+            try:
+                self.driver.refresh()
+                time.sleep(1.5)
+            except Exception:
+                pass
+
             dom_deadline = time.time() + DOM_PHASE_SECONDS
             dom_hit = 0
             dom_errors = 0
