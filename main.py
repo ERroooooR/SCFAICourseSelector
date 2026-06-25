@@ -1015,12 +1015,15 @@ class APISelector:
 
             try:
                 req = __import__('urllib').request.Request(url, data=data, headers=headers, method=method)
+                # SSL 验证跳过（代理可能导致证书不匹配）
+                import ssl
+                ctx = ssl._create_unverified_context()
                 if proxy_url:
                     from urllib.request import ProxyHandler, build_opener, HTTPSHandler
-                    opener = build_opener(ProxyHandler({"https": proxy_url, "http": proxy_url}), HTTPSHandler)
+                    opener = build_opener(ProxyHandler({"https": proxy_url, "http": proxy_url}), HTTPSHandler(context=ctx))
                     resp = opener.open(req, timeout=8)
                 else:
-                    resp = __import__('urllib').request.urlopen(req, timeout=8)
+                    resp = __import__('urllib').request.urlopen(req, timeout=8, context=ctx)
 
                 result = json.loads(resp.read().decode("utf-8"))
                 return result
