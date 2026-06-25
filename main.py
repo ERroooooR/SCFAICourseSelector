@@ -1266,14 +1266,18 @@ class APISelector:
         """
         url = f"{GetCourse.API_BASE}{GetCourse.API_PREFIX}{path}"
 
-        # 构建 JS fetch 代码
-        body_js = f", body: '{body}'" if body else ""
+        # 构建 JS fetch 代码（带 Token 兜底）
         js = f"""
         var done = arguments[arguments.length - 1];
+        var token = localStorage.getItem('cqu_edu_ACCESS_TOKEN') || 
+                    localStorage.getItem('cqu_edu_CURRENT_TOKEN') || '';
+        if (token) {{ try {{ token = JSON.parse(token); }} catch(e) {{}} }}
+        var headers = {{ 'Accept': 'application/json', 'Content-Type': 'application/json' }};
+        if (token) headers['Authorization'] = 'Bearer ' + token;
         fetch('{url}', {{
             method: '{method}',
             credentials: 'include',
-            headers: {{ 'Accept': 'application/json', 'Content-Type': 'application/json' }}{body_js}
+            headers: headers{body_js}
         }}).then(function(r) {{
             if (!r.ok) throw new Error('HTTP ' + r.status);
             return r.json();
