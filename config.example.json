@@ -1,47 +1,34 @@
 {
-    "_comment": "===== SCFAI 选课脚本 · 配置文件 =====",
+    "_comment": "===== SCFAI 多账号选课脚本 · 配置文件 =====\n支持两种格式：\n1. 旧格式（单账号）: 直接 { begin_time, courses, ... }\n2. 新格式（多账号）: { global: {...}, accounts: [...] }\n\n多账号时每个账号独立 Chrome 进程，互不干扰。\n===== 多账号配置示例 =====",
 
-    "begin_time": "2025-9-25 13:00:30",
-    "_begin_time_hint": "抢课开始时间，格式 YYYY-M-D HH:MM:SS",
+    "global": {
+        "begin_time": "2025-9-25 13:00:30",
+        "delay_time": 0.8,
+        "click_burst": 8,
+        "chrome_path": "",
+        "fuzzy_match": true
+    },
 
-    "delay_time": 0.8,
-    "_delay_time_hint": "页面加载等待秒数，网络慢可调大",
+    "_proxy_note": "代理池（可选）。留空列表则直连。支持 http/https/socks5。格式: ['http://host:port', 'socks5://host:port']",
+    "proxies": [],
 
-    "click_burst": 8,
-    "_click_burst_hint": "同一门课一轮内最大连击次数（不刷新）",
-
-    "chrome_path": "",
-    "_chrome_path_hint": "Chrome 可执行文件路径。留空则自动检测",
-
-    "fuzzy_match": true,
-    "_fuzzy_match_hint": "true=课程名模糊匹配（'体育'可点击'体育2'）\nfalse=课程名精确匹配",
-
-    "dual_mode": true,
-    "_dual_mode_hint": "true=双窗口并行（窗口1轮询 + 窗口2激进重试）\nfalse=单窗口轮询",
-
-    "api_mode": false,
-    "_api_mode_hint": "true=双Tab都用API直连选课\nfalse=看mixed_mode决定",
-
-    "mixed_mode": false,
-    "_mixed_mode_hint": "true=轮询Tab用DOM点击 + 激进Tab用API直连(api_mode为false时生效)",
-
-    "auto_login": false,
-    "_auto_login_hint": "true=自动填充学号和密码并登录，false=手动登录",
-
-    "username": "",
-    "_username_hint": "学号（auto_login=true 时必填）",
-
-    "password": "",
-    "_password_hint": "密码（auto_login=true 时必填）",
-
-    "courses": {
-        "_comment": "-------- 课程配置 --------",
-        "_format": "课程名: { course_code: 课程代码, label: 标签词, class_id: 班号词, teacher: 教师词 }\ncourse_code 用于区分同名不同码的课程，可选。其余三者OR关系，都支持模糊",
-        "体育2": {
-            "course_code": "",
-            "label": "羽毛球",
-            "class_id": "",
-            "teacher": ""
+    "accounts": [
+        {
+            "name": "张三",
+            "username": "2025211656",
+            "password": "你的密码",
+            "auto_login": true,
+            "dual_mode": true,
+            "api_mode": false,
+            "mixed_mode": true,
+            "courses": {
+                "体育2": {
+                    "course_code": "",
+                    "label": "羽毛球",
+                    "class_id": "",
+                    "teacher": "纪超香"
+                }
+            }
         }
-    }
+    ]
 }

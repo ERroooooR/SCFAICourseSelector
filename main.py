@@ -40,7 +40,12 @@ def _cell_text(cell):
 # ============================================================
 
 def load_config():
-    """从 config.json 读取配置，缺失时自动创建默认文件。"""
+    """从 config.json 读取配置，兼容旧格式（单账号）和新格式（多账号）。
+
+    返回:
+        global_cfg: dict  公共配置
+        accounts:   list[dict]  每个账号的独立配置
+    """
     config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
     if not os.path.exists(config_path):
         _create_default_config(config_path)
@@ -48,78 +53,112 @@ def load_config():
     with open(config_path, "r", encoding="utf-8") as f:
         cfg = json.load(f)
 
-    # 解析时间
-    begin_time = datetime.strptime(cfg.get("begin_time", "2025-9-25 13:00:30"), "%Y-%m-%d %H:%M:%S")
-    delay = float(cfg.get("delay_time", 0.8))
-    click_burst = int(cfg.get("click_burst", 5))
-    chrome_path = cfg.get("chrome_path", "").strip()
-    fuzzy_match = bool(cfg.get("fuzzy_match", False))
-    dual_mode = bool(cfg.get("dual_mode", True))
-    api_mode = bool(cfg.get("api_mode", False))
-    mixed_mode = bool(cfg.get("mixed_mode", False))
-    auto_login = bool(cfg.get("auto_login", False))
-    username = cfg.get("username", "").strip()
-    password = cfg.get("password", "").strip()
-    courses = cfg.get("courses", {})
+    # ── 检测格式 ──
+    accounts_cfg = cfg.get("accounts", [])
 
-    # 清理 courses 中的 _comment 等非课程条目（键以 _ 开头的跳过）
-    courses = {k: v for k, v in courses.items() if not k.startswith("_")}
+    if accounts_cfg:
+        # ── 新格式：global + accounts[] ──
+        global_cfg = cfg.get("global", {})
+        proxy_list = cfg.get("proxies", [])
+        global_cfg["proxies"] = proxy_list
+        global_cfg = _parse_global(global_cfg, config_path)
+        parsed_accounts = []
+        for i, acct in enumerate(accounts_cfg):
+            parsed = _parse_account(acct, global_cfg, i)
+            parsed_accounts.append(parsed)
+        return global_cfg, parsed_accounts
+    else:
+        # ── 旧格式：单账号 ──
+        global_cfg = _parse_global(cfg, config_path)
+        global_cfg["proxies"] = []
+        parsed = _parse_account(cfg, global_cfg, 0)
+        return global_cfg, [parsed]
 
-    # 标准化 course 值：字符串 → {label/class_id} 对象
-    normalized = {}
-    for k, v in courses.items():
+
+def _parse_global(cfg, config_path=None):
+    """解析公共配置。"""
+    begin_time = datetime.strptime(
+        cfg.get("begin_time", "2025-9-25 13:00:30"), "%Y-%m-%d %H:%M:%S"
+    )
+    return {
+        "begin_time": begin_time,
+        "delay_time": float(cfg.get("delay_time", 0.8)),
+        "click_burst": int(cfg.get("click_burst", 5)),
+        "chrome_path": cfg.get("chrome_path", "").strip() or None,
+        "fuzzy_match": bool(cfg.get("fuzzy_match", False)),
+        "proxies": cfg.get("proxies", []),
+    }
+
+
+def _parse_account(cfg, global_cfg, index):
+    """解析单个账号配置，全局缺省值兜底。"""
+    # 标准化 courses
+    courses_raw = cfg.get("courses", {})
+    courses_raw = {k: v for k, v in courses_raw.items() if not k.startswith("_")}
+    courses = {}
+    for k, v in courses_raw.items():
         if isinstance(v, str):
             v = v.strip()
-            normalized[k] = {"course_code": "", "label": v, "class_id": "", "teacher": ""}
+            courses[k] = {"course_code": "", "label": v, "class_id": "", "teacher": ""}
         elif isinstance(v, dict):
-            normalized[k] = {
+            courses[k] = {
                 "course_code": (v.get("course_code", "") or "").strip(),
                 "label": (v.get("label", "") or "").strip(),
                 "class_id": (v.get("class_id", "") or "").strip(),
                 "teacher": (v.get("teacher", "") or "").strip(),
             }
         else:
-            normalized[k] = {"course_code": "", "label": "", "class_id": "", "teacher": ""}
-    courses = normalized
+            courses[k] = {"course_code": "", "label": "", "class_id": "", "teacher": ""}
 
     return {
-        "begin_time": begin_time,
-        "delay_time": delay,
-        "click_burst": click_burst,
-        "chrome_path": chrome_path or None,
-        "fuzzy_match": fuzzy_match,
-        "dual_mode": dual_mode,
-        "api_mode": api_mode,
-        "mixed_mode": mixed_mode,
-        "auto_login": auto_login,
-        "username": username,
-        "password": password,
+        "index": index,
+        "name": cfg.get("name", f"账号{index+1}"),
+        "username": cfg.get("username", "").strip(),
+        "password": cfg.get("password", "").strip(),
+        "auto_login": bool(cfg.get("auto_login", False)),
+        "dual_mode": bool(cfg.get("dual_mode", True)),
+        "api_mode": bool(cfg.get("api_mode", False)),
+        "mixed_mode": bool(cfg.get("mixed_mode", False)),
         "courses": courses,
+        "begin_time": global_cfg["begin_time"],
+        "delay_time": global_cfg["delay_time"],
+        "click_burst": global_cfg["click_burst"],
+        "chrome_path": global_cfg["chrome_path"],
+        "fuzzy_match": global_cfg["fuzzy_match"],
     }
 
 
 def _create_default_config(path):
-    """生成一份默认配置文件。"""
+    """生成一份默认配置文件（多账号格式）。"""
     default = {
-        "begin_time": "2025-9-25 13:00:30",
-        "delay_time": 0.8,
-        "click_burst": 8,
-        "chrome_path": "",
-        "fuzzy_match": True,
-        "dual_mode": True,
-        "api_mode": False,
-        "mixed_mode": False,
-        "auto_login": False,
-        "username": "",
-        "password": "",
-        "courses": {
-            "体育2": {
-                "course_code": "",
-                "label": "羽毛球",
-                "class_id": "",
-                "teacher": ""
+        "_comment": "===== SCFAI 多账号选课脚本 · 配置示例 =====",
+        "global": {
+            "begin_time": "2025-9-25 13:00:30",
+            "delay_time": 0.8,
+            "click_burst": 8,
+            "chrome_path": "",
+            "fuzzy_match": True
+        },
+        "proxies": [],
+        "accounts": [
+            {
+                "name": "张三",
+                "username": "",
+                "password": "",
+                "auto_login": False,
+                "dual_mode": True,
+                "api_mode": False,
+                "mixed_mode": True,
+                "courses": {
+                    "体育2": {
+                        "course_code": "",
+                        "label": "羽毛球",
+                        "class_id": "",
+                        "teacher": ""
+                    }
+                }
             }
-        }
+        ]
     }
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
@@ -127,8 +166,51 @@ def _create_default_config(path):
     print(f"已创建默认配置文件: {path}")
 
 # ============================================================
-# 跨平台路径检测
+# 跨平台路径检测 & 代理池
 # ============================================================
+
+def _port_in_use(port):
+    """检查端口是否被占用。"""
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(('127.0.0.1', port)) == 0
+
+
+def _pick_proxy(proxy_list, account_index):
+    """从代理池中为账号分配代理（轮询）。"""
+    if not proxy_list:
+        return None
+    return proxy_list[account_index % len(proxy_list)]
+
+
+class ProxyPool:
+    """简单的代理轮询池。
+
+    支持 http/https/socks5 代理。
+    config.json 中配置: "proxies": ["http://host:port", "socks5://host:port"]
+    留空则直连。
+    """
+
+    def __init__(self, proxy_list):
+        self.proxies = list(proxy_list) if proxy_list else []
+        self._index = 0
+        self._lock = __import__('threading').Lock()
+
+    def next(self):
+        """返回下一个代理 URL，没有则返回 None。"""
+        if not self.proxies:
+            return None
+        with self._lock:
+            proxy = self.proxies[self._index % len(self.proxies)]
+            self._index += 1
+            return proxy
+
+    def __bool__(self):
+        return bool(self.proxies)
+
+    def __len__(self):
+        return len(self.proxies)
+
 
 def _find_chrome_binary():
     """检测 Chrome 浏览器可执行文件路径。"""
@@ -212,43 +294,85 @@ def _get_chromedriver_path():
         return os.path.join(driver_dir, "chromedriver")
 
 
-class Properties:
-    REMOTE_DEBUG_PORT = 9222
-    _login_done = Event()  # 跨线程登录信号
+class AccountRuntime:
+    """每个账号的独立运行时环境。
 
-    @classmethod
-    def init_from_config(cls, cfg):
-        """用配置文件初始化类属性。"""
-        cls.begin = cfg["begin_time"]
-        cls.DELAY_TIME = cfg["delay_time"]
-        cls.CLICK_BURST = cfg["click_burst"]
-        cls.FUZZY_MATCH = cfg["fuzzy_match"]
-        cls.courseList = cfg["courses"]
-        cls.dual_mode = bool(cfg.get("dual_mode", True))
-        cls.api_mode = bool(cfg.get("api_mode", False))
-        cls.mixed_mode = bool(cfg.get("mixed_mode", False))
-        cls.auto_login = bool(cfg.get("auto_login", False))
-        cls.login_username = cfg.get("username", "").strip()
-        cls.login_password = cfg.get("password", "").strip()
-        cls.google_path = None
-        if cfg["chrome_path"] and os.path.exists(cfg["chrome_path"]):
-            cls.google_path = cfg["chrome_path"]
+    替代原来的 Properties 全局类变量。
+    每个账号拥有独立的 Chrome 进程、端口、user-data-dir 和登录信号。
+    """
+
+    BASE_DEBUG_PORT = 9222
+
+    def __init__(self, acct_cfg, global_cfg):
+        # ── 账号信息 ──
+        self.name = acct_cfg["name"]
+        self.username = acct_cfg["username"]
+        self.password = acct_cfg["password"]
+        self.auto_login = acct_cfg["auto_login"]
+        self.dual_mode = acct_cfg["dual_mode"]
+        self.api_mode = acct_cfg["api_mode"]
+        self.mixed_mode = acct_cfg["mixed_mode"]
+        self.courseList = acct_cfg["courses"]
+
+        # ── 全局参数 ──
+        self.begin = acct_cfg["begin_time"]
+        self.DELAY_TIME = acct_cfg["delay_time"]
+        self.CLICK_BURST = acct_cfg["click_burst"]
+        self.FUZZY_MATCH = acct_cfg["fuzzy_match"]
+
+        # ── Chrome 路径 ──
+        self.google_path = None
+        if acct_cfg["chrome_path"] and os.path.exists(acct_cfg["chrome_path"]):
+            self.google_path = acct_cfg["chrome_path"]
         else:
-            cls.google_path = _find_chrome_binary()
-        cls.chromedriver_path = _get_chromedriver_path()
-        # 重置登录信号（避免重复运行时 Event 残留）
-        cls._login_done.clear()
+            self.google_path = _find_chrome_binary()
+        self.chromedriver_path = _get_chromedriver_path()
+
+        # ── 端口分配（每个账号递增）──
+        self.REMOTE_DEBUG_PORT = AccountRuntime.BASE_DEBUG_PORT + acct_cfg["index"]
+        # 防止端口冲突
+        while _port_in_use(self.REMOTE_DEBUG_PORT):
+            self.REMOTE_DEBUG_PORT += 1
+
+        # ── 用户数据目录（账号隔离的关键）──
+        project_root = os.path.dirname(os.path.abspath(__file__))
+        safe_name = self.username or f"account_{acct_cfg['index']}"
+        self.user_data_dir = os.path.join(project_root, "chrome_data", safe_name)
+
+        # ── 本账号内部的登录完成信号（用于双 Tab 同步）──
+        self._login_done = Event()
+
+        # ── 代理 ──
+        self.proxy = _pick_proxy(global_cfg.get("proxies", []), acct_cfg["index"])
+
+        # ── WebDriver 列表 ──
+        self.drivers = []
+
+    def create_drivers(self):
+        """创建本账号的 WebDriver 实例。"""
+        count = 2 if self.dual_mode else 1
+        self.drivers = []
+        # 第一个 driver：启动 Chrome
+        driver1 = self._create_driver(attach_to_existing=False)
+        self.drivers.append(driver1)
+        print(f"[{self.name}] 浏览器窗口 1 已启动 (端口 {self.REMOTE_DEBUG_PORT})")
+
+        for i in range(1, count):
+            try:
+                driver_n = self._create_driver(attach_to_existing=True)
+                driver_n.switch_to.new_window('tab')
+                self.drivers.append(driver_n)
+                print(f"[{self.name}] Tab {i+1} 已附加。")
+            except Exception as e:
+                print(f"[{self.name}] 附加 Tab {i+1} 失败: {e}")
 
     def _create_driver(self, attach_to_existing=False):
-        """创建单个 Chrome WebDriver 实例。
-
-        attach_to_existing=True: 连接到已有 Chrome 实例（第二个 tab）
-        """
+        """创建 Chrome WebDriver，支持独立 user-data-dir 和代理。"""
         if not self.google_path:
             raise RuntimeError(
-                "未找到 Chrome 浏览器，无法启动。\n"
+                f"[{self.name}] 未找到 Chrome 浏览器。\n"
                 "  1. 确认已安装 Chrome: https://www.google.com/chrome/\n"
-                "  2. 或在 config.json 中设置 chrome_path 为你的 Chrome 可执行文件路径"
+                "  2. 或在 config.json 中设置 chrome_path"
             )
         from selenium.webdriver.chrome.service import Service
         service = Service(self.chromedriver_path)
@@ -256,52 +380,33 @@ class Properties:
         options.binary_location = self.google_path
 
         if attach_to_existing:
-            # 连接到已有 Chrome 实例（共享 session，多 tab）
+            # 连接到已有 Chrome 实例
             options.add_experimental_option("debuggerAddress",
                                             f"127.0.0.1:{self.REMOTE_DEBUG_PORT}")
         else:
-            # 首次启动：开启远程调试端口
+            # 首次启动：独立 user-data-dir + 调试端口 + 代理
             options.add_argument(f"--remote-debugging-port={self.REMOTE_DEBUG_PORT}")
+            options.add_argument(f"--user-data-dir={self.user_data_dir}")
+
+            if self.proxy:
+                options.add_argument(f"--proxy-server={self.proxy}")
+                print(f"[{self.name}] 代理: {self.proxy}")
 
         try:
             return webdriver.Chrome(options=options, service=service)
         except Exception as e:
             if attach_to_existing:
-                raise  # 连接失败不重试，可能主实例还没启动
-            print(f"初始化 WebDriver 时出错: {e}")
+                raise
+            print(f"[{self.name}] 初始化 WebDriver 时出错: {e}")
             print("驱动异常，正在尝试下载或更新...")
             try:
                 from updateDriver import update_driver
                 update_driver(self.google_path)
-                print("驱动下载/更新完成。")
                 service = Service(self.chromedriver_path)
                 return webdriver.Chrome(options=options, service=service)
             except Exception as update_e:
                 print(f"驱动下载/更新失败: {update_e}")
                 raise
-
-    def __init__(self, count=1):
-        self.drivers = []
-        # 第一个 driver：启动 Chrome 并开启调试端口
-        driver1 = self._create_driver(attach_to_existing=False)
-        self.drivers.append(driver1)
-        print("浏览器窗口 1/主实例 已启动。")
-
-        # 后续 driver：连接到同一个 Chrome 实例（多 tab）
-        for i in range(1, count):
-            try:
-                driver_n = self._create_driver(attach_to_existing=True)
-                # 在新 tab 打开
-                driver_n.switch_to.new_window('tab')
-                self.drivers.append(driver_n)
-                print(f"浏览器 Tab {i+1} 已附加到主实例。")
-            except Exception as e:
-                print(f"附加 Tab {i+1} 失败: {e}")
-
-    @property
-    def driver(self):
-        """向后兼容：返回第一个 driver。"""
-        return self.drivers[0] if self.drivers else None
 
 
 class GetCourse:
@@ -321,11 +426,12 @@ class GetCourse:
     AGGRESSIVE_MAX_RETRIES = 300  # 单个课程最大连续重试次数（防死循环）
     MODAL_RENDER_GAP = 0.3        # Modal 表格渲染等待
 
-    def __init__(self, courseList, driver=None, fuzzy_match=False, api_selector=None):
+    def __init__(self, courseList, driver=None, fuzzy_match=False, api_selector=None, runtime=None):
         self.driver = driver
         self.courseList = courseList
         self.fuzzy_match = fuzzy_match
         self.api_selector = api_selector
+        self.runtime = runtime  # AccountRuntime 实例
         self.web_wait = WebDriverWait(self.driver, 4)
 
     def _course_title_xpath(self, name, course_code=""):
@@ -562,7 +668,7 @@ class GetCourse:
     def circle(self, courseQueue):
         """ 循环尝试选课 — API 模式下单次快速，DOM 模式下多击少刷。"""
         list_url = self.list_url
-        burst = 1 if self.api_selector else Properties.CLICK_BURST
+        burst = 1 if self.api_selector else (self.runtime.CLICK_BURST if self.runtime else 5)
         gap = 0.05 if self.api_selector else self.BURST_GAP
 
         while True:
@@ -570,7 +676,7 @@ class GetCourse:
             if self.driver.current_url != list_url:
                 print(f"导航至选课列表: {list_url}")
                 self.driver.get(list_url)
-            time.sleep(Properties.DELAY_TIME)
+            time.sleep(self.runtime.DELAY_TIME if self.runtime else 0.8)
 
             temp_courses_to_check = []
             while not courseQueue.empty():
@@ -606,7 +712,7 @@ class GetCourse:
             print(f"本轮结束，{len(temp_courses_to_check)} 门课程中仍有 {courseQueue.qsize()} 门待选。")
             print("刷新页面后继续下一轮...")
             self.driver.refresh()
-            time.sleep(Properties.DELAY_TIME)
+            time.sleep(self.runtime.DELAY_TIME if self.runtime else 0.8)
 
     def _login_and_wait(self, label="", is_primary=True):
         """登录 + 等待时间 → 直达 CourseStuSelectionList。
@@ -623,8 +729,10 @@ class GetCourse:
             self.driver.get(self.login_url)
 
             # ── 自动登录 ──
-            if Properties.auto_login and Properties.login_username and Properties.login_password:
-                print(f"[{label}]    自动登录中 ({Properties.login_username})...")
+            if self.runtime and self.runtime.auto_login and self.runtime.username and self.runtime.password:
+                username = self.runtime.username
+                password = self.runtime.password
+                print(f"[{label}]    自动登录中 ({username})...")
                 try:
                     # 等待登录表单
                     WebDriverWait(self.driver, 10).until(
@@ -645,14 +753,14 @@ class GetCourse:
                         By.XPATH, "//input[@placeholder and contains(@placeholder,'学工号')]"
                     )
                     user_input.clear()
-                    user_input.send_keys(Properties.login_username)
+                    user_input.send_keys(username)
 
                     # 填入密码
                     pwd_input = self.driver.find_element(
                         By.XPATH, "//input[@type='password' or contains(@placeholder,'密码')]"
                     )
                     pwd_input.clear()
-                    pwd_input.send_keys(Properties.login_password)
+                    pwd_input.send_keys(password)
 
                     # 点击登录按钮
                     login_btn = self.driver.find_element(
@@ -674,19 +782,21 @@ class GetCourse:
                 time.sleep(self.LOGIN_POLL_INTERVAL)
 
             # 通知其他线程：登录完成
-            Properties._login_done.set()
-            print(f"[{label}]    已通知其他 Tab 登录完成。")
+            if self.runtime:
+                self.runtime._login_done.set()
+                print(f"[{label}]    已通知其他 Tab 登录完成。")
 
         else:
             # ── 副线程：等待主线程登录完成 ──
             print(f"[{label}] 等待主 Tab 登录...")
-            Properties._login_done.wait()  # 阻塞直到主线程 set()
+            if self.runtime:
+                self.runtime._login_done.wait()  # 阻塞直到主线程 set()
             print(f"[{label}] 主 Tab 已登录，直接进入选课列表。")
 
         # ── 直达 CourseStuSelectionList ──
         print(f"[{label}] 3. 直达选课列表: {list_url}")
         self.driver.get(list_url)
-        time.sleep(Properties.DELAY_TIME)
+        time.sleep(self.runtime.DELAY_TIME if self.runtime else 0.8)
 
         # 等待表格加载
         try:
@@ -697,9 +807,11 @@ class GetCourse:
             print(f"[{label}]    警告: 页面表格未加载，继续尝试...")
 
         # 等待开始时间（两个线程都要等）
-        print(f"[{label}] 4. 等待选课时间 {Properties.begin}...")
-        while datetime.now() <= Properties.begin:
-            remaining = (Properties.begin - datetime.now()).total_seconds()
+        begin = self.runtime.begin if self.runtime else None
+        if begin:
+            print(f"[{label}] 4. 等待选课时间 {begin}...")
+            while datetime.now() <= begin:
+                remaining = (begin - datetime.now()).total_seconds()
             if remaining > 10:
                 print(f"[{label}]    距开始还有 {remaining:.0f} 秒")
                 time.sleep(self.COUNTDOWN_LONG)
@@ -729,7 +841,7 @@ class GetCourse:
             print(f"[激进] ★ 聚焦: {courseName}")
 
             self.driver.get(list_url)
-            time.sleep(Properties.DELAY_TIME)
+            time.sleep(self.runtime.DELAY_TIME if self.runtime else 0.8)
 
             fail_count = 0
             while True:
@@ -1075,36 +1187,37 @@ class APISelector:
         return False, f"无可用教学班（label='{target_label}' class_id='{target_cid}' teacher='{target_teacher}'）"
 
 
-def run(courseList, drivers, dual_mode=True, api_mode=False):
-    """ 启动选课。
+def run_account(runtime):
+    """为单个账号启动选课。"""
+    rt = runtime
+    drivers = rt.drivers
+    courseList = rt.courseList
+    dual_mode = rt.dual_mode
+    api_mode = rt.api_mode
+    name = rt.name
 
-    drivers: WebDriver 实例列表
-    dual_mode: True=双窗口（轮询+激进），False=单窗口轮询
-    api_mode: True=API 直连选课（JSON 解析，快 10-100 倍）
-    """
     if not drivers:
-        print("错误: 需要提供 WebDriver 实例。")
+        print(f"[{name}] 错误: 无可用 WebDriver。")
         return
 
     if dual_mode and len(drivers) < 2:
-        print("警告: dual_mode 需要至少 2 个 driver，回退为单窗口模式。")
+        print(f"[{name}] 警告: dual_mode 需要 2 个 driver，回退单窗口。")
         dual_mode = False
 
-    # ── API 模式初始化（每个 Tab 独立决定用 API 还是 DOM）──
+    # ── API 模式初始化 ──
     api_poll = None
     api_agg = None
     if api_mode:
-        print("=== API 直连模式（双 Tab 均用 API）===")
+        print(f"[{name}] === API 直连模式（双 Tab 均用 API）===")
         api_poll = APISelector(drivers[0])
         if dual_mode and len(drivers) >= 2:
             api_agg = APISelector(drivers[1])
-    elif Properties.mixed_mode:
-        # 混合模式：轮询用 DOM 点击，激进用 API
-        print("=== 混合模式（轮询=DOM 点击, 激进=API 直连）===")
+    elif rt.mixed_mode:
+        print(f"[{name}] === 混合模式（轮询=DOM, 激进=API）===")
         if dual_mode and len(drivers) >= 2:
             api_agg = APISelector(drivers[1])
 
-    # 每个窗口独立队列（避免线程竞争）
+    # 每个窗口独立队列
     courses = list(courseList.keys())
     queue_poll = Queue()
     queue_aggressive = Queue()
@@ -1112,71 +1225,97 @@ def run(courseList, drivers, dual_mode=True, api_mode=False):
         queue_poll.put(c)
         queue_aggressive.put(c)
 
-    instances = []
     threads = []
 
-    # 窗口 1：轮询模式
-    instance_poll = GetCourse(courseList, drivers[0],
-                              fuzzy_match=Properties.FUZZY_MATCH,
-                              api_selector=api_poll)
-    instances.append(instance_poll)
-    thread_poll = Thread(target=instance_poll.run_poll, args=(queue_poll,), name="Poll")
-    threads.append(thread_poll)
-    print("已创建 [轮询] 线程（窗口 1）")
+    # Tab 1: 轮询
+    inst_poll = GetCourse(courseList, drivers[0],
+                          fuzzy_match=rt.FUZZY_MATCH,
+                          api_selector=api_poll,
+                          runtime=rt)
+    t_poll = Thread(target=inst_poll.run_poll, args=(queue_poll,), name=f"{name}-Poll")
+    threads.append(t_poll)
+    print(f"[{name}] 已创建 [轮询] 线程（Tab 1）")
 
     if dual_mode:
-        # 窗口 2：激进模式
-        instance_agg = GetCourse(courseList, drivers[1],
-                                 fuzzy_match=Properties.FUZZY_MATCH,
-                                 api_selector=api_agg)
-        instances.append(instance_agg)
-        thread_agg = Thread(target=instance_agg.run_aggressive,
-                           args=(queue_aggressive,), name="Aggressive")
-        threads.append(thread_agg)
-        print("已创建 [激进] 线程（窗口 2）")
+        inst_agg = GetCourse(courseList, drivers[1],
+                             fuzzy_match=rt.FUZZY_MATCH,
+                             api_selector=api_agg,
+                             runtime=rt)
+        t_agg = Thread(target=inst_agg.run_aggressive,
+                       args=(queue_aggressive,), name=f"{name}-Aggressive")
+        threads.append(t_agg)
+        print(f"[{name}] 已创建 [激进] 线程（Tab 2）")
 
-    for thread in threads:
-        print(f"正在启动线程: {thread.name}")
-        thread.start()
+    for t in threads:
+        print(f"[{name}] 启动线程: {t.name}")
+        t.start()
 
-    for thread in threads:
-        thread.join()
+    for t in threads:
+        t.join()
 
-    print("所有线程已完成。")
+    print(f"[{name}] 所有线程已完成。")
 
 
 if __name__ == '__main__':
-    # 加载配置
-    config = load_config()
-    Properties.init_from_config(config)
+    global_cfg, accounts = load_config()
 
-    driver_count = 2 if Properties.dual_mode else 1
-    props = Properties(count=driver_count)
-    drivers = props.drivers
+    if not accounts:
+        print("错误: 配置文件中没有账号。")
+        sys.exit(1)
 
-    if drivers:
-        try:
-            print("--- 启动选课脚本 ---")
-            print(f"双窗口模式: {'开' if Properties.dual_mode else '关'}")
-            print(f"课程列表: {Properties.courseList}")
-            print(f"开始时间: {Properties.begin}")
-            print(f"模糊匹配: {'开' if Properties.FUZZY_MATCH else '关'}")
-            print(f"连击次数: {Properties.CLICK_BURST}")
-            print(f"API 模式: {'开' if Properties.api_mode else '关'}")
-            run(Properties.courseList, drivers,
-                dual_mode=Properties.dual_mode,
-                api_mode=Properties.api_mode)
-        except KeyboardInterrupt:
-            print("\n用户中断，正在退出...")
-        finally:
-            print("--- 正在关闭浏览器 ---")
-            # 主 driver 负责关闭浏览器，附加 driver 只关闭自身连接
-            for i, d in enumerate(drivers):
-                try:
-                    d.quit()
-                except Exception:
-                    pass  # 共享实例时第二个 quit 可能抛异常，忽略
+    print(f"=== 加载 {len(accounts)} 个账号 ===")
+    for a in accounts:
+        print(f"  - {a['name']} (学号: {a['username']}) "
+              f"选课 {len(a['courses'])} 门 | "
+              f"{'双窗口' if a['dual_mode'] else '单窗口'} | "
+              f"{'API' if a['api_mode'] else ('混合' if a['mixed_mode'] else 'DOM')}")
+
+    # ── 代理池信息 ──
+    proxies = global_cfg.get("proxies", [])
+    if proxies:
+        print(f"代理池: {len(proxies)} 个代理 ({', '.join(proxies[:3])}{'...' if len(proxies)>3 else ''})")
     else:
-        print("未能初始化 WebDriver。程序退出。")
+        print("代理: 直连（未配置代理池）")
+
+    # ── 创建每个账号的运行时环境 ──
+    runtimes = []
+    for acct_cfg in accounts:
+        rt = AccountRuntime(acct_cfg, global_cfg)
+        runtimes.append(rt)
+        try:
+            rt.create_drivers()
+        except Exception as e:
+            print(f"[{rt.name}] 创建浏览器失败: {e}")
+            continue
+
+    # ── 启动所有账号（每个账号一个线程）──
+    account_threads = []
+    for rt in runtimes:
+        if rt.drivers:
+            t = Thread(target=run_account, args=(rt,),
+                       name=f"Account-{rt.name}")
+            account_threads.append(t)
+            t.start()
+            # 错开启动，避免同时登录造成服务器压力
+            time.sleep(1)
+
+    if not account_threads:
+        print("错误: 所有账号均未能启动浏览器。")
+        sys.exit(1)
+
+    try:
+        for t in account_threads:
+            t.join()
+    except KeyboardInterrupt:
+        print("\n用户中断。正在关闭所有浏览器...")
+
+    # ── 清理 ──
+    for rt in runtimes:
+        for d in rt.drivers:
+            try:
+                d.quit()
+            except Exception:
+                pass
+    print("所有浏览器已关闭。")
 
 
