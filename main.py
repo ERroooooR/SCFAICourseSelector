@@ -622,10 +622,14 @@ class GetCourse:
             reason = " + ".join(reason_parts)
             print(f"    班 {idx+1}: ✓ {reason} → {match_info} 容量={capacity_text}")
             try:
-                # 滚动到 checkbox 可见区域
+                # 滚动到 checkbox 可见区域 + 等待可点击
                 self.driver.execute_script(
                     "arguments[0].scrollIntoView({block:'center',inline:'center'});",
                     checkboxes[0]
+                )
+                # 等待元素可交互（模态框动画完成）
+                WebDriverWait(self.driver, 5).until(
+                    EC.element_to_be_clickable(checkboxes[0])
                 )
                 checkboxes[0].click()
 
@@ -703,7 +707,7 @@ class GetCourse:
                 print(f"导航至选课列表: {list_url}")
                 self.driver.get(list_url)
 
-            # ── 等待主课程表格加载（防元素未渲染）──
+            # ── 等待主课程表格加载（防元素未渲染 + 白页卡死）──
             try:
                 WebDriverWait(self.driver, 10).until(
                     EC.presence_of_element_located(
@@ -711,8 +715,14 @@ class GetCourse:
                     )
                 )
             except TimeoutException:
-                print("    警告: 主课程表格未加载，继续尝试...")
-                time.sleep(2)
+                # 检查是否白页（页面加载了但内容没渲染）
+                page_text = self.driver.find_element(By.TAG_NAME, "body").text.strip()
+                if len(page_text) < 20:
+                    print("    检测到白页（页面无内容），强制重新导航...")
+                    self.driver.get(list_url)
+                    time.sleep(3)
+                else:
+                    print("    警告: 主课程表格未加载，继续尝试...")
                 continue
             time.sleep(self.runtime.DELAY_TIME if self.runtime else 0.8)
 
