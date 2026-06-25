@@ -33,11 +33,12 @@
 
     "courses": {
         "_comment": "-------- 课程配置 --------",
-        "_format": "课程名: { label: 标签词, class_id: 班号词, teacher: 教师词 }\n三者OR关系，都支持模糊（包含即可），全部为空则自动选第一个可用班",
-        "体育": {
-            "label": "",
+        "_format": "课程名: { course_code: 课程代码, label: 标签词, class_id: 班号词, teacher: 教师词 }\ncourse_code 用于区分同名不同码的课程，可选。其余三者OR关系，都支持模糊",
+        "体育2": {
+            "course_code": "",
+            "label": "羽毛球",
             "class_id": "",
-            "teacher": "纪超香"
+            "teacher": ""
         }
     }
 }

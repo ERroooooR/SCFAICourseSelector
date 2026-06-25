@@ -69,15 +69,16 @@ def load_config():
     for k, v in courses.items():
         if isinstance(v, str):
             v = v.strip()
-            normalized[k] = {"label": v, "class_id": "", "teacher": ""}
+            normalized[k] = {"course_code": "", "label": v, "class_id": "", "teacher": ""}
         elif isinstance(v, dict):
             normalized[k] = {
+                "course_code": (v.get("course_code", "") or "").strip(),
                 "label": (v.get("label", "") or "").strip(),
                 "class_id": (v.get("class_id", "") or "").strip(),
                 "teacher": (v.get("teacher", "") or "").strip(),
             }
         else:
-            normalized[k] = {"label": "", "class_id": "", "teacher": ""}
+            normalized[k] = {"course_code": "", "label": "", "class_id": "", "teacher": ""}
     courses = normalized
 
     return {
@@ -110,6 +111,7 @@ def _create_default_config(path):
         "password": "",
         "courses": {
             "体育2": {
+                "course_code": "",
                 "label": "羽毛球",
                 "class_id": "",
                 "teacher": ""
@@ -322,14 +324,26 @@ class GetCourse:
         self.api_selector = api_selector
         self.web_wait = WebDriverWait(self.driver, 4)
 
-    def _course_title_xpath(self, name):
-        """根据模糊/精确模式生成课程标题 XPath。引号自动转义。"""
-        # 移除引号防注入（课程名实际不会含引号）
+    def _course_title_xpath(self, name, course_code=""):
+        """根据模糊/精确模式生成课程标题 XPath。引号自动转义。
+        
+        当提供 course_code 时，同时匹配课程代码列，用于区分同名不同码的课程。
+        """
         safe = name.replace('"', '').replace("'", '')
         if self.fuzzy_match:
-            return f'//a[contains(@title, "{safe}")]'
+            base = f'//a[contains(@title, "{safe}")]'
         else:
-            return f'//a[@title="{safe}"]'
+            base = f'//a[@title="{safe}"]'
+
+        if course_code:
+            safe_code = course_code.replace('"', '').replace("'", '')
+            # 匹配同一行同时包含课程名和课程代码
+            return (
+                f'//tr[td//a[contains(@title, "{safe}")]'
+                f' and contains(td[2]//text(), "{safe_code}")]'
+                f'//a[contains(@title, "{safe}")]'
+            )
+        return base
 
     def wait(self, retries=1, *element):
         """ 显式等待 - 单元素 """
@@ -381,7 +395,8 @@ class GetCourse:
 
         # ── DOM 模式（原逻辑）──
         # 1. 点击课程链接打开 Modal
-        course_link = self.wait(2, By.XPATH, self._course_title_xpath(name))
+        course_code = target.get("course_code", "") or ""
+        course_link = self.wait(2, By.XPATH, self._course_title_xpath(name, course_code))
         course_link.click()
         print(f"已点击课程: {name}")
 
@@ -715,9 +730,10 @@ class GetCourse:
             while True:
                 try:
                     # 等元素可见再操作
+                    code = self.courseList.get(courseName, {}).get("course_code", "") or ""
                     link = WebDriverWait(self.driver, 3).until(
                         EC.presence_of_element_located(
-                            (By.XPATH, self._course_title_xpath(courseName))
+                            (By.XPATH, self._course_title_xpath(courseName, code))
                         )
                     )
                     if self.select(courseName):
@@ -936,6 +952,7 @@ class APISelector:
         target_label = (target.get("label", "") or "").strip()
         target_cid = (target.get("class_id", "") or "").strip()
         target_teacher = (target.get("teacher", "") or "").strip()
+        target_code = (target.get("course_code", "") or "").strip()
 
         # 1. 从课程列表中找到 courseId 和 courseCode
         course_list = self.get_course_list(selection_source)
@@ -949,18 +966,30 @@ class APISelector:
 
         for c in course_list:
             c_name = c.get("name", "")
-            if (fuzzy_course and course_name in c_name) or (not fuzzy_course and c_name == course_name):
+            c_code = c.get("codeR", "")
+            name_ok = (fuzzy_course and course_name in c_name) or (not fuzzy_course and c_name == course_name)
+            code_ok = (not target_code) or (target_code in c_code)
+            if name_ok and code_ok:
                 candidates.append(c)
 
         if not candidates:
-            return False, f"课程 '{course_name}' 不在列表中"
+            reason = f"课程 '{course_name}'"
+            if target_code:
+                reason += f" (code='{target_code}')"
+            return False, f"{reason} 不在列表中"
         if len(candidates) > 1:
-            names = [c["name"] for c in candidates]
-            print(f"[API] ⚠ 课程名 '{course_name}' 命中多项: {names}，取第一个 '{names[0]}'")
-            # 优先精确匹配
-            exact = next((c for c in candidates if c["name"] == course_name), None)
+            names = [f"{c['name']}({c.get('codeR','?')})" for c in candidates]
+            print(f"[API] ⚠ 课程 '{course_name}' 命中多项: {names}")
+            # 优先级: 精确名+精确码 > 精确码 > 精确名 > 首个
+            exact = next((c for c in candidates
+                         if c["name"] == course_name and c.get("codeR") == target_code), None)
+            if not exact and target_code:
+                exact = next((c for c in candidates if c.get("codeR") == target_code), None)
+            if not exact and not target_code:
+                exact = next((c for c in candidates if c["name"] == course_name), None)
             if exact:
                 candidates = [exact]
+                print(f"[API]   → 选定: {exact['name']}({exact.get('codeR','?')})")
 
         c = candidates[0]
         course_id = c["id"]
