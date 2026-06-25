@@ -176,7 +176,55 @@ def _port_in_use(port):
         return s.connect_ex(('127.0.0.1', port)) == 0
 
 
-class ProxyPool:
+def _test_proxy(proxy_url, timeout=5):
+    """测试代理是否可用（通过 SOCKS/HTTP 连接目标服务器）。
+
+    返回: (proxy_url, True/False, latency_ms)
+    """
+    import socket
+    import urllib.parse
+
+    parsed = urllib.parse.urlparse(proxy_url)
+    host = parsed.hostname
+    port = parsed.port
+    scheme = parsed.scheme
+
+    if not host or not port:
+        return (proxy_url, False, 0)
+
+    try:
+        start = time.time()
+        sock = socket.create_connection((host, port), timeout=timeout)
+        latency = int((time.time() - start) * 1000)
+        sock.close()
+        return (proxy_url, True, latency)
+    except Exception as e:
+        return (proxy_url, False, 0)
+
+
+def _filter_alive_proxies(proxy_list, max_test=20, timeout=3):
+    """快速筛选可用代理。最多测试 max_test 个，返回可用列表。"""
+    if not proxy_list:
+        return []
+
+    print(f"正在测试代理连通性（最多 {max_test} 个）...")
+    alive = []
+    test_list = proxy_list[:max_test]
+
+    # 并发测试（线程池）
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    with ThreadPoolExecutor(max_workers=min(10, len(test_list))) as executor:
+        futures = {executor.submit(_test_proxy, p, timeout): p for p in test_list}
+        for future in as_completed(futures):
+            proxy, ok, latency = future.result()
+            if ok:
+                alive.append(proxy)
+                print(f"  ✓ {proxy} ({latency}ms)")
+            else:
+                print(f"  ✗ {proxy} (不可达)")
+
+    print(f"可用代理: {len(alive)}/{len(test_list)}")
+    return alive
     """代理轮询池，支持自动淘汰死代理。
 
     用法:
@@ -406,7 +454,7 @@ class AccountRuntime:
             options.add_argument(f"--remote-debugging-port={self.REMOTE_DEBUG_PORT}")
             options.add_argument(f"--user-data-dir={self.user_data_dir}")
 
-            if self.api_proxy_pool:
+            if self.api_proxy:
                 # 代理仅用于 API 请求，不注入 Chrome
                 pass
 
@@ -1355,12 +1403,12 @@ if __name__ == '__main__':
               f"{'双窗口' if a['dual_mode'] else '单窗口'} | "
               f"{'API' if a['api_mode'] else ('混合' if a['mixed_mode'] else 'DOM')}")
 
-    # ── 代理池信息 ──
-    proxies = global_cfg.get("proxies", [])
-    if proxies:
-        print(f"代理池: {len(proxies)} 个代理 ({', '.join(proxies[:3])}{'...' if len(proxies)>3 else ''})")
-    else:
-        print("代理: 直连（未配置代理池）")
+    # ── 代理池预筛选 ──
+    raw_proxies = global_cfg.get("proxies", [])
+    alive_proxies = _filter_alive_proxies(raw_proxies, max_test=20, timeout=3)
+    global_cfg["proxies"] = alive_proxies  # 替换为可用代理
+    if raw_proxies and not alive_proxies:
+        print("⚠ 警告: 所有代理均不可用，将使用直连。")
 
     # ── 创建每个账号的运行时环境 ──
     runtimes = []
