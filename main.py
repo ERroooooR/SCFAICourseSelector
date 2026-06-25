@@ -1258,19 +1258,16 @@ class APISelector:
         return None
 
     def _api_request(self, path, method="GET", body=None):
-        """通过浏览器 JS fetch 发送 API 请求（复用浏览器 Cookie/SSL 上下文）。
+        """通过浏览器 JS fetch 发送 API 请求。
 
-        path:   相对路径，如 "/course-list?..."
-        method: GET / POST
-        body:   JSON 字符串 (POST 时)
+        返回: (data, raw_response_dict) — 成功时 data 为解析后的数据，
+              失败时 data=None, raw_response_dict 包含完整响应用于诊断。
         """
         url = f"{GetCourse.API_BASE}{GetCourse.API_PREFIX}{path}"
         body_js = f", body: '{body}'" if body else ""
 
-        # 诊断：打印请求 URL
         self._log(f"→ {method} {url}")
 
-        # 构建 JS fetch 代码
         js = f"""
         var done = arguments[arguments.length - 1];
         var token = localStorage.getItem('cqu_edu_ACCESS_TOKEN') || 
@@ -1283,10 +1280,14 @@ class APISelector:
             credentials: 'include',
             headers: headers{body_js}
         }}).then(function(r) {{
-            if (!r.ok) throw new Error('HTTP ' + r.status);
-            return r.json();
-        }}).then(function(data) {{
-            done(JSON.stringify({{ok: true, data: data}}));
+            return r.text().then(function(txt) {{
+                try {{
+                    var data = JSON.parse(txt);
+                    done(JSON.stringify({{ok: true, status: r.status, data: data}}));
+                }} catch(e) {{
+                    done(JSON.stringify({{ok: false, status: r.status, error: 'JSON parse: ' + e.message, body: txt.slice(0,500)}}));
+                }}
+            }});
         }}).catch(function(err) {{
             done(JSON.stringify({{ok: false, error: err.message || String(err)}}));
         }});
@@ -1295,9 +1296,13 @@ class APISelector:
             raw = self.driver.execute_async_script(js)
             result = json.loads(raw)
             if result.get("ok"):
-                return result.get("data")
+                data = result.get("data")
+                # 检查 data 是否为有效课程数据
+                if not data or not isinstance(data, dict) or not data.get("data"):
+                    self._log(f"响应异常: status={result.get('status')} data_keys={list(data.keys()) if isinstance(data,dict) else type(data).__name__}")
+                return data
             else:
-                self._log(f"fetch 失败: {result}")
+                self._log(f"fetch 失败: {json.dumps(result, ensure_ascii=False)[:300]}")
                 return None
         except Exception as e:
             self._log(f"execute_async_script 异常: {e}")
@@ -1314,9 +1319,11 @@ class APISelector:
         path = f"/course-list?selectionSource={quote(selection_source)}"
         resp = self._api_request(path, "GET")
         if not resp or not isinstance(resp, dict):
-            self._log(f"get_course_list: 无效响应 resp={resp}")
+            self._log(f"get_course_list 无效响应: type={type(resp).__name__} resp={json.dumps(resp, ensure_ascii=False)[:200]}")
             return []
         data_list = resp.get("data", [])
+        if not data_list:
+            self._log(f"get_course_list: data为空, resp keys={list(resp.keys())}")
         courses = []
         for area in (data_list if isinstance(data_list, list) else []):
             area_name = area.get("selectionArea", "")
