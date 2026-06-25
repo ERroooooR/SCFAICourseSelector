@@ -1404,7 +1404,13 @@ class APISelector:
         if len(candidates) > 1:
             names = [f"{c['name']}({c.get('codeR','?')})" for c in candidates]
             self._log(f"⚠ 课程 '{course_name}' 命中多项: {names}")
-            # ...existing code...
+            # 优先级: 精确名+精确码 > 精确码 > 精确名 > 首个
+            exact = next((c for c in candidates
+                         if c["name"] == course_name and c.get("codeR") == target_code), None)
+            if not exact and target_code:
+                exact = next((c for c in candidates if c.get("codeR") == target_code), None)
+            if not exact and not target_code:
+                exact = next((c for c in candidates if c["name"] == course_name), None)
             if exact:
                 candidates = [exact]
                 self._log(f"  → 选定: {exact['name']}({exact.get('codeR','?')})")
