@@ -1307,9 +1307,8 @@ class APISelector:
                 "/api/enrollment/enrollment/student/select", "POST",
                 json.dumps({
                     "courses": [{
-                        "courseName": course_name,
-                        "courseCode": course_code,
-                        "courseId": str(course_id),
+                        "id": str(course_id),
+                        "checked": str(class_id),
                         "classes": [{"classIds": [str(class_id)], "fakeClassTypeList": []}],
                     }],
                     "selectionSource": selection_source,
