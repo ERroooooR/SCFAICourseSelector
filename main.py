@@ -1254,17 +1254,13 @@ class APISelector:
     def _api_request(self, path, method="GET", body=None):
         """Python 原生 HTTP 请求（不走浏览器 JS），每次请求轮换代理。
 
-        path:   API 路径，如 "/api/enrollment/enrollment/course-list?..."
-        method: GET / POST
-        body:   JSON 字符串 (POST 时使用)
-
-        代理失败自动切换下一个；全部失败则直连兜底。
+        path:   API 路径，如 "/course-list?..."
         """
         if self._cached_token is None:
             self._cached_token = self._get_token()
         token = self._cached_token
 
-        url = f"https://jwjx.scfai.edu.cn{path}"
+        url = f"{GetCourse.API_BASE}{GetCourse.API_PREFIX}{path}"
         headers = {
             "Authorization": f"Bearer {token}" if token else "",
             "Accept": "application/json",
@@ -1310,15 +1306,12 @@ class APISelector:
     # ── API 端点 ──
 
     def get_course_list(self, selection_source="主修", use_cache=True):
-        """获取课程列表，返回扁平化数组 [{id, name, codeR, selectionArea, courseCategory, ...}]。
-        
-        首次调用后缓存，同 session 内不会重复请求。
-        """
+        """获取课程列表。"""
         if use_cache and self._course_list_cache is not None:
             return self._course_list_cache
 
         from urllib.parse import quote
-        path = f"/api/enrollment/enrollment/course-list?selectionSource={quote(selection_source)}"
+        path = f"/course-list?selectionSource={quote(selection_source)}"
         resp = self._api_request(path, "GET")
         if not resp or not isinstance(resp, dict):
             return []
@@ -1338,7 +1331,7 @@ class APISelector:
     def get_course_details(self, course_id, selection_source="主修"):
         """获取教学班详情，返回 selectCourseVOList。"""
         from urllib.parse import quote
-        path = f"/api/enrollment/enrollment/courseDetails/{course_id}?selectionSource={quote(selection_source)}"
+        path = f"/courseDetails/{course_id}?selectionSource={quote(selection_source)}"
         data = self._api_request(path, "GET")
         if data and "selectCourseListVOs" in data:
             vos = data["selectCourseListVOs"]
