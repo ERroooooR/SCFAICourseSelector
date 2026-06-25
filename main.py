@@ -491,7 +491,10 @@ class GetCourse:
     # ── 限速判断模式（任一命中即认为被限速）──
     RATE_LIMIT_PATTERNS = ["请求过于频繁", "操作频繁", "请稍后", "限流"]
 
-    # ── 节奏常量 ──
+    # ── 选课上下文（由当前 Tab 决定）──
+    SELECTION_SOURCE = "主修"
+    PROGRAM_TYPE = "主修"
+    STUDY_NATURE = "初修"
     LOGIN_POLL_INTERVAL = 2       # 等待登录时轮询间隔
     COUNTDOWN_LONG = 5            # 距开始 >10s 时的等待间隔
     COUNTDOWN_SHORT = 0.1         # 距开始 ≤10s 时的等待间隔
