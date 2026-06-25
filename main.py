@@ -1301,6 +1301,15 @@ class APISelector:
                 if result.get("ok"):
                     data = result.get("data")
                     if data and isinstance(data, dict):
+                        # 检查内层是否为服务器错误响应
+                        if data.get("status") == "error" or data.get("ok") is False:
+                            msg = data.get("msg", "")
+                            if any(p in msg for p in GetCourse.RATE_LIMIT_PATTERNS):
+                                if attempt == 0:
+                                    self._log(f"限速({msg})，自动重试...")
+                                continue
+                            self._log(f"→ 服务器: msg='{msg}'")
+                            return None
                         return data  # 正常
                     msg = data.get("msg", "") if isinstance(data, dict) else ""
                     if any(p in msg for p in GetCourse.RATE_LIMIT_PATTERNS):
@@ -1330,11 +1339,10 @@ class APISelector:
         path = f"/course-list?selectionSource={quote(selection_source)}"
         resp = self._api_request(path, "GET")
         if not resp or not isinstance(resp, dict):
-            self._log(f"get_course_list 无效响应: type={type(resp).__name__} resp={json.dumps(resp, ensure_ascii=False)[:200]}")
             return []
         data_list = resp.get("data", [])
-        if not data_list:
-            self._log(f"get_course_list: data为空, resp keys={list(resp.keys())}")
+        if not data_list or not isinstance(data_list, list):
+            return []
         courses = []
         for area in (data_list if isinstance(data_list, list) else []):
             area_name = area.get("selectionArea", "")
