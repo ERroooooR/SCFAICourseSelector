@@ -1079,15 +1079,12 @@ class APISelector:
         else:
             data = None
 
-        # ── 代理轮换 ──
+        # ── 代理 ──
         for attempt in range(5):
-            proxy_url = None
-            if self._proxy_pool and self._proxy_pool.proxies:
-                proxy_url = self._proxy_pool.next()
+            proxy_url = self._proxy  # 单代理，无池轮换
 
             try:
                 req = __import__('urllib').request.Request(url, data=data, headers=headers, method=method)
-                # SSL 验证跳过（代理可能导致证书不匹配）
                 import ssl
                 ctx = ssl._create_unverified_context()
                 if proxy_url:
@@ -1102,9 +1099,11 @@ class APISelector:
 
             except Exception as e:
                 err_msg = str(e)[:80]
-                if proxy_url and self._proxy_pool:
-                    self._proxy_pool.mark_dead(proxy_url)
-                    print(f"[API] 代理 {proxy_url} 失败: {err_msg}")
+                if proxy_url:
+                    print(f"[API] 代理 {proxy_url} 失败({attempt+1}/5): {err_msg}")
+                    if attempt >= 2:
+                        print(f"[API] 代理连续失败，降级直连...")
+                        proxy_url = None  # 后续尝试直连
                 elif attempt == 0:
                     print(f"[API] 直连失败: {err_msg}")
                 if not proxy_url and attempt >= 2:
