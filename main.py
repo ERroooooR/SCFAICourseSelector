@@ -56,6 +56,7 @@ def load_config():
     fuzzy_match = bool(cfg.get("fuzzy_match", False))
     dual_mode = bool(cfg.get("dual_mode", True))
     api_mode = bool(cfg.get("api_mode", False))
+    mixed_mode = bool(cfg.get("mixed_mode", False))
     auto_login = bool(cfg.get("auto_login", False))
     username = cfg.get("username", "").strip()
     password = cfg.get("password", "").strip()
@@ -89,6 +90,7 @@ def load_config():
         "fuzzy_match": fuzzy_match,
         "dual_mode": dual_mode,
         "api_mode": api_mode,
+        "mixed_mode": mixed_mode,
         "auto_login": auto_login,
         "username": username,
         "password": password,
@@ -106,6 +108,7 @@ def _create_default_config(path):
         "fuzzy_match": True,
         "dual_mode": True,
         "api_mode": False,
+        "mixed_mode": False,
         "auto_login": False,
         "username": "",
         "password": "",
@@ -223,6 +226,7 @@ class Properties:
         cls.courseList = cfg["courses"]
         cls.dual_mode = bool(cfg.get("dual_mode", True))
         cls.api_mode = bool(cfg.get("api_mode", False))
+        cls.mixed_mode = bool(cfg.get("mixed_mode", False))
         cls.auto_login = bool(cfg.get("auto_login", False))
         cls.login_username = cfg.get("username", "").strip()
         cls.login_password = cfg.get("password", "").strip()
@@ -1081,12 +1085,17 @@ def run(courseList, drivers, dual_mode=True, api_mode=False):
         print("警告: dual_mode 需要至少 2 个 driver，回退为单窗口模式。")
         dual_mode = False
 
-    # ── API 模式初始化 ──
+    # ── API 模式初始化（每个 Tab 独立决定用 API 还是 DOM）──
     api_poll = None
     api_agg = None
     if api_mode:
-        print("=== API 直连模式 ===")
+        print("=== API 直连模式（双 Tab 均用 API）===")
         api_poll = APISelector(drivers[0])
+        if dual_mode and len(drivers) >= 2:
+            api_agg = APISelector(drivers[1])
+    elif Properties.mixed_mode:
+        # 混合模式：轮询用 DOM 点击，激进用 API
+        print("=== 混合模式（轮询=DOM 点击, 激进=API 直连）===")
         if dual_mode and len(drivers) >= 2:
             api_agg = APISelector(drivers[1])
 

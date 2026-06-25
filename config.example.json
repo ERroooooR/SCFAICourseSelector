@@ -20,7 +20,10 @@
     "_dual_mode_hint": "true=双窗口并行（窗口1轮询 + 窗口2激进重试）\nfalse=单窗口轮询",
 
     "api_mode": false,
-    "_api_mode_hint": "true=API直连选课（JSON解析，不解析DOM，快10-100倍）\nfalse=DOM点击选课",
+    "_api_mode_hint": "true=双Tab都用API直连选课\nfalse=看mixed_mode决定",
+
+    "mixed_mode": false,
+    "_mixed_mode_hint": "true=轮询Tab用DOM点击 + 激进Tab用API直连(api_mode为false时生效)",
 
     "auto_login": false,
     "_auto_login_hint": "true=自动填充学号和密码并登录，false=手动登录",
