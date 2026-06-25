@@ -176,40 +176,55 @@ def _port_in_use(port):
         return s.connect_ex(('127.0.0.1', port)) == 0
 
 
-def _pick_proxy(proxy_list, account_index):
-    """从代理池中为账号分配代理（轮询）。"""
-    if not proxy_list:
-        return None
-    return proxy_list[account_index % len(proxy_list)]
-
-
 class ProxyPool:
-    """简单的代理轮询池。
+    """代理轮询池，支持自动淘汰死代理。
 
-    支持 http/https/socks5 代理。
-    config.json 中配置: "proxies": ["http://host:port", "socks5://host:port"]
-    留空则直连。
-    """
+    用法:
+        pool = ProxyPool(["http://1.2.3.4:8080", "socks5://5.6.7.8:1080"])
+        proxy = pool.next()   # 轮询取代理
+        pool.mark_dead(proxy) # 标记死亡（本次会话不再使用）
+     """
 
     def __init__(self, proxy_list):
-        self.proxies = list(proxy_list) if proxy_list else []
+        self._alive = list(proxy_list) if proxy_list else []
+        self._dead = set()
         self._index = 0
         self._lock = __import__('threading').Lock()
+        self._consecutive_failures = 0
+        self._max_consecutive_failures = 5  # 连续失败 N 次后全部跳过
+
+    @property
+    def proxies(self):
+        """当前可用代理列表（排除已标记死亡的）。"""
+        return self._alive
 
     def next(self):
-        """返回下一个代理 URL，没有则返回 None。"""
-        if not self.proxies:
+        """返回下一个可用代理 URL，全部不可用则返回 None。"""
+        if not self._alive:
             return None
+        if self._consecutive_failures >= self._max_consecutive_failures:
+            return None  # 连续多次失败，放弃所有代理
         with self._lock:
-            proxy = self.proxies[self._index % len(self.proxies)]
-            self._index += 1
-            return proxy
+            for _ in range(len(self._alive)):
+                proxy = self._alive[self._index % len(self._alive)]
+                self._index += 1
+                if proxy not in self._dead:
+                    return proxy
+        return None
+
+    def mark_dead(self, proxy):
+        """标记代理为死亡，本次会话不再使用。"""
+        with self._lock:
+            self._dead.add(proxy)
+            self._consecutive_failures += 1
+            alive = [p for p in self._alive if p not in self._dead]
+            print(f"[代理] {proxy} 已淘汰 (存活 {len(alive)}/{len(self._alive)})")
 
     def __bool__(self):
-        return bool(self.proxies)
+        return bool([p for p in self._alive if p not in self._dead])
 
     def __len__(self):
-        return len(self.proxies)
+        return len([p for p in self._alive if p not in self._dead])
 
 
 def _find_chrome_binary():
@@ -1012,12 +1027,13 @@ class APISelector:
 
             except Exception as e:
                 err_msg = str(e)[:80]
-                if proxy_url:
+                if proxy_url and self._proxy_pool:
+                    self._proxy_pool.mark_dead(proxy_url)
                     print(f"[API] 代理 {proxy_url} 失败: {err_msg}")
                 elif attempt == 0:
                     print(f"[API] 直连失败: {err_msg}")
                 if not proxy_url and attempt >= 2:
-                    break  # 直连失败不重试太多
+                    break
 
         return None
 
