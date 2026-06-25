@@ -509,10 +509,10 @@ class GetCourse:
         safe_code = course_code.replace('"', '').replace("'", '') if course_code else ""
 
         if course_code:
-            # 主表格 row 定位：同时包含课程名和课程代码
+            # 主表格 row + 课程代码列定位（代码在第2列 td[2]）
             return (
-                f'//table//tr[td//a[contains(@title, "{safe}")]'
-                f' and contains(td[3], "{safe_code}")]'
+                f'//tr[td//a[contains(@title, "{safe}")]'
+                f' and td[2][contains(., "{safe_code}")]]'
                 f'//a[contains(@title, "{safe}")]'
             )
         elif self.fuzzy_match:
@@ -571,9 +571,16 @@ class GetCourse:
         # ── DOM 模式：仅当 api_selector 为 None 时执行 ──
         # 1. 点击课程链接打开 Modal
         course_code = target.get("course_code", "") or ""
-        course_link = self.wait(2, By.XPATH, self._course_title_xpath(name, course_code))
+        try:
+            course_link = self.wait(2, By.XPATH, self._course_title_xpath(name, course_code))
+        except NoSuchElementException:
+            if course_code:
+                print(f"  course_code '{course_code}' 未匹配，回退只用课程名...")
+                course_link = self.wait(2, By.XPATH, self._course_title_xpath(name))
+            else:
+                raise
         course_link.click()
-        print(f"已点击课程: {name}")
+        print(f"已点击课程: {name}" + (f" ({course_code})" if course_code else ""))
 
         # 等待 Modal 渲染
         try:
@@ -947,6 +954,11 @@ class GetCourse:
 
         list_url = self.list_url
         print("[激进] 5. 开始激进重试...")
+
+        # ── 初始化 API selector（提前提取 Token）──
+        if self.api_selector:
+            print("[激进]   API 初始化...")
+            self.api_selector._get_token()
 
         while not courseQueue.empty():
             courseName = courseQueue.get()
