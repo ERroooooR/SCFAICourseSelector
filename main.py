@@ -1296,15 +1296,15 @@ class APISelector:
                 return result
 
             except Exception as e:
-                err_msg = str(e)[:80]
+                err_msg = str(e)[:120]
                 if proxy_url:
                     self._log(f"代理 {proxy_url} 失败({attempt+1}/5): {err_msg}")
                     if attempt >= 2:
                         self._log("代理连续失败，降级直连...")
                         proxy_url = None
-                elif attempt == 0:
-                    self._log(f"直连失败: {err_msg}")
-                if not proxy_url and attempt >= 2:
+                else:
+                    self._log(f"直连失败({attempt+1}/5): {err_msg}")
+                if not proxy_url and attempt >= 4:
                     break
 
         return None
