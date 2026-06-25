@@ -890,12 +890,21 @@ class GetCourse:
         """ [激进模式] 连续重试：元素存在就不刷新，极速连点 """
         self._login_and_wait("激进", is_primary=False)
 
+        # 保存激进窗口句柄，每次操作前激活（防止后台 Tab 被 Chrome 节流）
+        agg_handle = self.driver.current_window_handle
+
         list_url = self.list_url
         print("[激进] 5. 开始激进重试...")
 
         while not courseQueue.empty():
             courseName = courseQueue.get()
             print(f"[激进] ★ 聚焦: {courseName}")
+
+            # 激活激进窗口（防止后台 Tab 不渲染）
+            try:
+                self.driver.switch_to.window(agg_handle)
+            except Exception:
+                pass
 
             self.driver.get(list_url)
             time.sleep(self.runtime.DELAY_TIME if self.runtime else 0.8)
@@ -1057,12 +1066,12 @@ class APISelector:
         from urllib.parse import quote
         path = f"/api/enrollment/enrollment/course-list?selectionSource={quote(selection_source)}"
         resp = self._api_request(path, "GET")
-        if not resp:
+        if not resp or not isinstance(resp, dict):
             return []
         data_list = resp.get("data", [])
         courses = []
-        for area in data_list:
-            for c in area.get("courseVOList", []):
+        for area in (data_list if isinstance(data_list, list) else []):
+            for c in area.get("courseVOList", []) if isinstance(area, dict) else []:
                 if "codeR" in c:
                     c["codeR"] = str(c["codeR"])
                 courses.append(c)
