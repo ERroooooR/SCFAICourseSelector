@@ -1258,56 +1258,43 @@ class APISelector:
         return None
 
     def _api_request(self, path, method="GET", body=None):
-        """Python 原生 HTTP 请求（不走浏览器 JS），每次请求轮换代理。
+        """通过浏览器 JS fetch 发送 API 请求（复用浏览器 Cookie/SSL 上下文）。
 
-        path:   API 路径，如 "/course-list?..."
+        path:   相对路径，如 "/course-list?..."
+        method: GET / POST
+        body:   JSON 字符串 (POST 时)
         """
-        if self._cached_token is None:
-            self._cached_token = self._get_token()
-        token = self._cached_token
-
         url = f"{GetCourse.API_BASE}{GetCourse.API_PREFIX}{path}"
-        headers = {
-            "Authorization": f"Bearer {token}" if token else "",
-            "Accept": "application/json",
-        }
-        if body:
-            headers["Content-Type"] = "application/json"
-            data = body.encode("utf-8")
-        else:
-            data = None
 
-        # ── 代理 ──
-        for attempt in range(5):
-            proxy_url = self._proxy  # 单代理，无池轮换
-
-            try:
-                req = __import__('urllib').request.Request(url, data=data, headers=headers, method=method)
-                import ssl
-                ctx = ssl._create_unverified_context()
-                if proxy_url:
-                    from urllib.request import ProxyHandler, build_opener, HTTPSHandler
-                    opener = build_opener(ProxyHandler({"https": proxy_url, "http": proxy_url}), HTTPSHandler(context=ctx))
-                    resp = opener.open(req, timeout=8)
-                else:
-                    resp = __import__('urllib').request.urlopen(req, timeout=8, context=ctx)
-
-                result = json.loads(resp.read().decode("utf-8"))
-                return result
-
-            except Exception as e:
-                err_msg = str(e)[:120]
-                if proxy_url:
-                    self._log(f"代理 {proxy_url} 失败({attempt+1}/5): {err_msg}")
-                    if attempt >= 2:
-                        self._log("代理连续失败，降级直连...")
-                        proxy_url = None
-                else:
-                    self._log(f"直连失败({attempt+1}/5): {err_msg}")
-                if not proxy_url and attempt >= 4:
-                    break
-
-        return None
+        # 构建 JS fetch 代码
+        body_js = f", body: '{body}'" if body else ""
+        js = f"""
+        var done = arguments[arguments.length - 1];
+        fetch('{url}', {{
+            method: '{method}',
+            credentials: 'include',
+            headers: {{ 'Accept': 'application/json', 'Content-Type': 'application/json' }}{body_js}
+        }}).then(function(r) {{
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+        }}).then(function(data) {{
+            done(JSON.stringify({{ok: true, data: data}}));
+        }}).catch(function(err) {{
+            done(JSON.stringify({{ok: false, error: err.message || String(err)}}));
+        }});
+        """
+        try:
+            raw = self.driver.execute_async_script(js)
+            result = json.loads(raw)
+            if result.get("ok"):
+                return result.get("data")
+            else:
+                err = result.get("error", "unknown")
+                self._log(f"fetch 失败: {err}")
+                return None
+        except Exception as e:
+            self._log(f"execute_async_script 异常: {e}")
+            return None
 
     # ── API 端点 ──
 
