@@ -357,10 +357,11 @@ class AccountRuntime:
         # ── 本账号内部的登录完成信号（用于双 Tab 同步）──
         self._login_done = Event()
 
-        # ── 代理池（API 专用，不影响浏览器）──
-        self.api_proxy_pool = None
-        if global_cfg.get("proxies"):
-            self.api_proxy_pool = ProxyPool(global_cfg["proxies"])
+        # ── 代理（每个账号绑定一个专属代理，不共享）──
+        proxies = global_cfg.get("proxies", [])
+        self.api_proxy = proxies[acct_cfg["index"] % len(proxies)] if proxies else None
+        if self.api_proxy:
+            print(f"[{self.name}] 专属代理: {self.api_proxy}")
 
         # ── WebDriver 列表 ──
         self.drivers = []
@@ -983,12 +984,12 @@ class APISelector:
     POST_BACKOFF_MAX = 5.0    # 遇到限速时最大退避秒数
     RATE_LIMIT_MSG = "请求过于频繁"  # 服务器限速提示
 
-    def __init__(self, driver, proxy_pool=None):
+    def __init__(self, driver, api_proxy=None):
         self.driver = driver
         self._last_post_time = 0
         self._cached_token = None
         self._post_lock = __import__('threading').Lock()
-        self._proxy_pool = proxy_pool  # ProxyPool 实例，None 则直连
+        self._proxy = api_proxy  # 专属代理 URL 或 None
 
     # ── Token ──
 
@@ -1293,13 +1294,13 @@ def run_account(runtime):
     api_agg = None
     if api_mode:
         print(f"[{name}] === API 直连模式（双 Tab 均用 API）===")
-        api_poll = APISelector(drivers[0], proxy_pool=rt.api_proxy_pool)
+        api_poll = APISelector(drivers[0], api_proxy=rt.api_proxy)
         if dual_mode and len(drivers) >= 2:
-            api_agg = APISelector(drivers[1], proxy_pool=rt.api_proxy_pool)
+            api_agg = APISelector(drivers[1], api_proxy=rt.api_proxy)
     elif rt.mixed_mode:
         print(f"[{name}] === 混合模式（轮询=DOM, 激进=API）===")
         if dual_mode and len(drivers) >= 2:
-            api_agg = APISelector(drivers[1], proxy_pool=rt.api_proxy_pool)
+            api_agg = APISelector(drivers[1], api_proxy=rt.api_proxy)
 
     # 每个窗口独立队列
     courses = list(courseList.keys())
